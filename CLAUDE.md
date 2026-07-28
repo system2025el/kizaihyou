@@ -25,11 +25,7 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
   - テーブル定義（カラム追加・型変更等）を変更したら、**もう一方のリポジトリの`app/_lib/db/types/types.ts`も再生成すること**を忘れない。
   - どちらのリポジトリでマイグレーションを管理するか（migrationファイルの置き場所）は未確定。SQLでスキーマを変更する際は、必ずkikikan側（`y.yoneyama`）と事前にすり合わせる。
 - **Auth**: Supabase Authのユーザーテーブルも共有。ただしセッション（Cookie/localStorage）はドメインごとに独立するため、同じユーザーでもkikikanとkizaihyouでそれぞれログインが必要（SSOは組んでいない）。
-- **型生成**: `app/_lib/db/types/types.ts`は現状プレースホルダー（`Tables: Record<string, never>`）。本来は
-  ```bash
-  npx supabase gen types typescript --db-url "$DATABASE_URL" --schema public > app/_lib/db/types/types.ts
-  ```
-  で生成するが、このCLIコマンドはDocker Desktop（またはPodman）が無いと失敗する（`LegacyContainerRuntimeNotFoundError`）。Docker導入まではプレースホルダーのまま、実際に使うテーブルの型だけ手動で追記して進める運用とする。手動追記した型は、Docker導入後に正式なCLI生成で置き換えること。
+- **型生成**: `app/_lib/db/types/types.ts`はSupabase CLI（ローカル実行、`npx supabase gen types typescript --db-url "$DATABASE_URL" --schema public`）で生成する想定だが、このコマンドはDocker Desktop（またはPodman）が無いと失敗する（`LegacyContainerRuntimeNotFoundError`）。この環境にはDockerが無いため、代わりに`.mcp.json`のSupabase MCP（`generate_typescript_types`ツール）経由で生成している。生成後は`yarn fix:prettier`でプロジェクトのフォーマットに合わせること。スキーマ変更時は同じ手順で再生成する。
 
 ## アーキテクチャ（現状）
 
