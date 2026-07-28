@@ -2,6 +2,10 @@
 
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowLeftIcon from '@mui/icons-material/KeyboardArrowLeft';
+import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import {
   Autocomplete,
   Box,
@@ -34,6 +38,14 @@ const getActiveSum = (row: EquipmentRow) =>
 
 const getTotal = (row: EquipmentRow) => getActiveSum(row) + (Number(row.spare) || 0);
 
+const moveItem = <T,>(list: T[], index: number, direction: -1 | 1): T[] => {
+  const target = index + direction;
+  if (target < 0 || target >= list.length) return list;
+  const next = [...list];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+};
+
 let columnIdCounter = 0;
 const createColumn = (label: string): EquipmentColumn => {
   columnIdCounter += 1;
@@ -49,8 +61,26 @@ const EquipmentTable = () => {
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
+  const moveRow = (id: string, direction: -1 | 1) => {
+    setRows((prev) =>
+      moveItem(
+        prev,
+        prev.findIndex((row) => row.id === id),
+        direction
+      )
+    );
+  };
 
   const addColumn = () => setColumns((prev) => [...prev, createColumn(`列${prev.length + 1}`)]);
+  const moveColumn = (id: string, direction: -1 | 1) => {
+    setColumns((prev) =>
+      moveItem(
+        prev,
+        prev.findIndex((column) => column.id === id),
+        direction
+      )
+    );
+  };
   const removeColumn = (id: string) => {
     setColumns((prev) => prev.filter((column) => column.id !== id));
     setRows((prev) =>
@@ -92,22 +122,38 @@ const EquipmentTable = () => {
         <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ minWidth: 56 }} />
+              <TableCell sx={{ minWidth: 130 }} />
               <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
               <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
               <TableCell sx={{ minWidth: 160 }}>備考</TableCell>
               <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
               <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
               <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
-              {columns.map((column) => (
+              {columns.map((column, columnIndex) => (
                 <TableCell key={column.id} sx={{ minWidth: 110 }}>
                   <Box display="flex" alignItems="center" gap={0.5}>
+                    <IconButton
+                      size="small"
+                      onClick={() => moveColumn(column.id, -1)}
+                      disabled={columnIndex === 0}
+                      title="列を左に移動"
+                    >
+                      <KeyboardArrowLeftIcon fontSize="small" />
+                    </IconButton>
                     <TextField
                       value={column.label}
                       onChange={(e) => updateColumnLabel(column.id, e.target.value)}
                       variant="standard"
                       size="small"
                     />
+                    <IconButton
+                      size="small"
+                      onClick={() => moveColumn(column.id, 1)}
+                      disabled={columnIndex === columns.length - 1}
+                      title="列を右に移動"
+                    >
+                      <KeyboardArrowRightIcon fontSize="small" />
+                    </IconButton>
                     <IconButton size="small" onClick={() => removeColumn(column.id)} title="列を削除">
                       <DeleteIcon fontSize="small" />
                     </IconButton>
@@ -124,6 +170,22 @@ const EquipmentTable = () => {
                     <Typography variant="caption" color="text.secondary">
                       {index + 1}
                     </Typography>
+                    <IconButton
+                      size="small"
+                      onClick={() => moveRow(row.id, -1)}
+                      disabled={index === 0}
+                      title="行を上に移動"
+                    >
+                      <KeyboardArrowUpIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => moveRow(row.id, 1)}
+                      disabled={index === rows.length - 1}
+                      title="行を下に移動"
+                    >
+                      <KeyboardArrowDownIcon fontSize="small" />
+                    </IconButton>
                     <IconButton size="small" onClick={() => removeRow(row.id)} title="行を削除">
                       <DeleteIcon fontSize="small" />
                     </IconButton>
