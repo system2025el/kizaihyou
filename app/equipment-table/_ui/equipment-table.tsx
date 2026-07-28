@@ -26,8 +26,13 @@ const INITIAL_ROW_COUNT = 10;
 let rowIdCounter = 0;
 const createRow = (): EquipmentRow => {
   rowIdCounter += 1;
-  return { id: `row-${rowIdCounter}`, kind: '', name: '', remark: '', qty: {} };
+  return { id: `row-${rowIdCounter}`, kind: '', name: '', remark: '', spare: '', qty: {} };
 };
+
+const getActiveSum = (row: EquipmentRow) =>
+  Object.values(row.qty).reduce((sum, value) => sum + (Number(value) || 0), 0);
+
+const getTotal = (row: EquipmentRow) => getActiveSum(row) + (Number(row.spare) || 0);
 
 let columnIdCounter = 0;
 const createColumn = (label: string): EquipmentColumn => {
@@ -91,6 +96,9 @@ const EquipmentTable = () => {
               <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
               <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
               <TableCell sx={{ minWidth: 160 }}>備考</TableCell>
+              <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
+              <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
+              <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
               {columns.map((column) => (
                 <TableCell key={column.id} sx={{ minWidth: 110 }}>
                   <Box display="flex" alignItems="center" gap={0.5}>
@@ -147,6 +155,22 @@ const EquipmentTable = () => {
                     variant="standard"
                     size="small"
                     fullWidth
+                  />
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">{getTotal(row)}</Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">{getActiveSum(row)}</Typography>
+                </TableCell>
+                <TableCell>
+                  <TextField
+                    value={row.spare}
+                    onChange={(e) => updateRow(row.id, { spare: e.target.value })}
+                    variant="standard"
+                    size="small"
+                    type="number"
+                    sx={{ width: 64 }}
                   />
                 </TableCell>
                 {columns.map((column) => (

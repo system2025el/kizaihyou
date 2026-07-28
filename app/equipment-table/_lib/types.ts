@@ -8,5 +8,6 @@ export type EquipmentRow = {
   kind: string;
   name: string;
   remark: string;
+  spare: string;
   qty: Record<string, string>;
 };
