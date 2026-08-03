@@ -31,6 +31,7 @@ import { useState } from 'react';
 
 import { DEFAULT_COLUMN_LABELS, EQUIPMENT_NAME_OPTIONS } from '../_lib/mock-data';
 import { EquipmentColumn, EquipmentRow } from '../_lib/types';
+import { MemoTooltip } from './memo-tooltip';
 
 const INITIAL_ROW_COUNT = 10;
 
@@ -154,14 +155,8 @@ const EquipmentRowView = ({ row, index, columns, onUpdateRow, onUpdateQty, onRem
           renderInput={(params) => <TextField {...params} variant="standard" />}
         />
       </TableCell>
-      <TableCell>
-        <TextField
-          value={row.remark}
-          onChange={(e) => onUpdateRow({ remark: e.target.value })}
-          variant="standard"
-          size="small"
-          fullWidth
-        />
+      <TableCell align="center">
+        <MemoTooltip title={row.name || '備考'} memo={row.remark} onSave={(remark) => onUpdateRow({ remark })} />
       </TableCell>
       <TableCell>
         <Typography variant="body2">{getTotal(row)}</Typography>
@@ -274,7 +269,9 @@ const EquipmentTable = () => {
                 <TableCell sx={{ minWidth: 130 }} />
                 <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
                 <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
-                <TableCell sx={{ minWidth: 160 }}>備考</TableCell>
+                <TableCell align="center" sx={{ minWidth: 60 }}>
+                  備考
+                </TableCell>
                 <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
                 <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
                 <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
