@@ -1,10 +1,13 @@
 'use client';
 
+import { closestCenter, DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { restrictToHorizontalAxis } from '@dnd-kit/modifiers';
+import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import KeyboardArrowLeftIcon from '@mui/icons-material/KeyboardArrowLeft';
-import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import {
   Autocomplete,
@@ -55,9 +58,49 @@ const createColumn = (label: string): EquipmentColumn => {
 const initialColumns = DEFAULT_COLUMN_LABELS.map(createColumn);
 const initialRows = Array.from({ length: INITIAL_ROW_COUNT }, createRow);
 
+type ColumnHeaderCellProps = {
+  column: EquipmentColumn;
+  onLabelChange: (label: string) => void;
+  onRemove: () => void;
+};
+
+const ColumnHeaderCell = ({ column, onLabelChange, onRemove }: ColumnHeaderCellProps) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.id });
+
+  return (
+    <TableCell
+      ref={setNodeRef}
+      sx={{
+        minWidth: 110,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.6 : 1,
+        zIndex: isDragging ? 1 : 'auto',
+        bgcolor: 'background.paper',
+      }}
+    >
+      <Box display="flex" alignItems="center" gap={0.5}>
+        <IconButton size="small" sx={{ cursor: 'grab' }} title="ドラッグで並び替え" {...attributes} {...listeners}>
+          <DragIndicatorIcon fontSize="small" />
+        </IconButton>
+        <TextField
+          value={column.label}
+          onChange={(e) => onLabelChange(e.target.value)}
+          variant="standard"
+          size="small"
+        />
+        <IconButton size="small" onClick={onRemove} title="列を削除">
+          <DeleteIcon fontSize="small" />
+        </IconButton>
+      </Box>
+    </TableCell>
+  );
+};
+
 const EquipmentTable = () => {
   const [columns, setColumns] = useState<EquipmentColumn[]>(initialColumns);
   const [rows, setRows] = useState<EquipmentRow[]>(initialRows);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
@@ -72,15 +115,6 @@ const EquipmentTable = () => {
   };
 
   const addColumn = () => setColumns((prev) => [...prev, createColumn(`列${prev.length + 1}`)]);
-  const moveColumn = (id: string, direction: -1 | 1) => {
-    setColumns((prev) =>
-      moveItem(
-        prev,
-        prev.findIndex((column) => column.id === id),
-        direction
-      )
-    );
-  };
   const removeColumn = (id: string) => {
     setColumns((prev) => prev.filter((column) => column.id !== id));
     setRows((prev) =>
@@ -90,6 +124,15 @@ const EquipmentTable = () => {
         return { ...row, qty };
       })
     );
+  };
+  const handleColumnDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setColumns((prev) => {
+      const oldIndex = prev.findIndex((column) => column.id === active.id);
+      const newIndex = prev.findIndex((column) => column.id === over.id);
+      return arrayMove(prev, oldIndex, newIndex);
+    });
   };
 
   const updateRow = (id: string, patch: Partial<EquipmentRow>) => {
@@ -129,37 +172,23 @@ const EquipmentTable = () => {
               <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
               <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
               <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
-              {columns.map((column, columnIndex) => (
-                <TableCell key={column.id} sx={{ minWidth: 110 }}>
-                  <Box display="flex" alignItems="center" gap={0.5}>
-                    <IconButton
-                      size="small"
-                      onClick={() => moveColumn(column.id, -1)}
-                      disabled={columnIndex === 0}
-                      title="列を左に移動"
-                    >
-                      <KeyboardArrowLeftIcon fontSize="small" />
-                    </IconButton>
-                    <TextField
-                      value={column.label}
-                      onChange={(e) => updateColumnLabel(column.id, e.target.value)}
-                      variant="standard"
-                      size="small"
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                modifiers={[restrictToHorizontalAxis]}
+                onDragEnd={handleColumnDragEnd}
+              >
+                <SortableContext items={columns.map((column) => column.id)} strategy={horizontalListSortingStrategy}>
+                  {columns.map((column) => (
+                    <ColumnHeaderCell
+                      key={column.id}
+                      column={column}
+                      onLabelChange={(label) => updateColumnLabel(column.id, label)}
+                      onRemove={() => removeColumn(column.id)}
                     />
-                    <IconButton
-                      size="small"
-                      onClick={() => moveColumn(column.id, 1)}
-                      disabled={columnIndex === columns.length - 1}
-                      title="列を右に移動"
-                    >
-                      <KeyboardArrowRightIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton size="small" onClick={() => removeColumn(column.id)} title="列を削除">
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                </TableCell>
-              ))}
+                  ))}
+                </SortableContext>
+              </DndContext>
             </TableRow>
           </TableHead>
           <TableBody>
