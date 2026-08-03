@@ -1,14 +1,18 @@
 'use client';
 
-import { closestCenter, DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { restrictToHorizontalAxis } from '@dnd-kit/modifiers';
-import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { closestCenter, DndContext, DragEndEvent, Modifier, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { restrictToHorizontalAxis, restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import {
+  arrayMove,
+  horizontalListSortingStrategy,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import {
   Autocomplete,
   Box,
@@ -41,14 +45,6 @@ const getActiveSum = (row: EquipmentRow) =>
 
 const getTotal = (row: EquipmentRow) => getActiveSum(row) + (Number(row.spare) || 0);
 
-const moveItem = <T,>(list: T[], index: number, direction: -1 | 1): T[] => {
-  const target = index + direction;
-  if (target < 0 || target >= list.length) return list;
-  const next = [...list];
-  [next[index], next[target]] = [next[target], next[index]];
-  return next;
-};
-
 let columnIdCounter = 0;
 const createColumn = (label: string): EquipmentColumn => {
   columnIdCounter += 1;
@@ -57,6 +53,12 @@ const createColumn = (label: string): EquipmentColumn => {
 
 const initialColumns = DEFAULT_COLUMN_LABELS.map(createColumn);
 const initialRows = Array.from({ length: INITIAL_ROW_COUNT }, createRow);
+
+// 行(row-*)は縦方向、列(col-*)は横方向のみに移動を制限する
+const restrictAxisByDraggedType: Modifier = (args) => {
+  const isRow = typeof args.active?.id === 'string' && args.active.id.startsWith('row-');
+  return isRow ? restrictToVerticalAxis(args) : restrictToHorizontalAxis(args);
+};
 
 type ColumnHeaderCellProps = {
   column: EquipmentColumn;
@@ -97,6 +99,102 @@ const ColumnHeaderCell = ({ column, onLabelChange, onRemove }: ColumnHeaderCellP
   );
 };
 
+type EquipmentRowViewProps = {
+  row: EquipmentRow;
+  index: number;
+  columns: EquipmentColumn[];
+  onUpdateRow: (patch: Partial<EquipmentRow>) => void;
+  onUpdateQty: (columnId: string, value: string) => void;
+  onRemoveRow: () => void;
+};
+
+const EquipmentRowView = ({ row, index, columns, onUpdateRow, onUpdateQty, onRemoveRow }: EquipmentRowViewProps) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id });
+
+  return (
+    <TableRow
+      ref={setNodeRef}
+      sx={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.6 : 1,
+        zIndex: isDragging ? 1 : 'auto',
+        bgcolor: isDragging ? 'background.paper' : undefined,
+      }}
+    >
+      <TableCell>
+        <Box display="flex" alignItems="center" gap={0.5}>
+          <Typography variant="caption" color="text.secondary">
+            {index + 1}
+          </Typography>
+          <IconButton size="small" sx={{ cursor: 'grab' }} title="ドラッグで並び替え" {...attributes} {...listeners}>
+            <DragIndicatorIcon fontSize="small" />
+          </IconButton>
+          <IconButton size="small" onClick={onRemoveRow} title="行を削除">
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      </TableCell>
+      <TableCell>
+        <TextField
+          value={row.kind}
+          onChange={(e) => onUpdateRow({ kind: e.target.value })}
+          variant="standard"
+          size="small"
+          fullWidth
+        />
+      </TableCell>
+      <TableCell>
+        <Autocomplete
+          freeSolo
+          size="small"
+          options={EQUIPMENT_NAME_OPTIONS}
+          inputValue={row.name}
+          onInputChange={(_event, value) => onUpdateRow({ name: value })}
+          renderInput={(params) => <TextField {...params} variant="standard" />}
+        />
+      </TableCell>
+      <TableCell>
+        <TextField
+          value={row.remark}
+          onChange={(e) => onUpdateRow({ remark: e.target.value })}
+          variant="standard"
+          size="small"
+          fullWidth
+        />
+      </TableCell>
+      <TableCell>
+        <Typography variant="body2">{getTotal(row)}</Typography>
+      </TableCell>
+      <TableCell>
+        <Typography variant="body2">{getActiveSum(row)}</Typography>
+      </TableCell>
+      <TableCell>
+        <TextField
+          value={row.spare}
+          onChange={(e) => onUpdateRow({ spare: e.target.value })}
+          variant="standard"
+          size="small"
+          type="number"
+          sx={{ width: 64 }}
+        />
+      </TableCell>
+      {columns.map((column) => (
+        <TableCell key={column.id}>
+          <TextField
+            value={row.qty[column.id] ?? ''}
+            onChange={(e) => onUpdateQty(column.id, e.target.value)}
+            variant="standard"
+            size="small"
+            type="number"
+            sx={{ width: 64 }}
+          />
+        </TableCell>
+      ))}
+    </TableRow>
+  );
+};
+
 const EquipmentTable = () => {
   const [columns, setColumns] = useState<EquipmentColumn[]>(initialColumns);
   const [rows, setRows] = useState<EquipmentRow[]>(initialRows);
@@ -104,15 +202,6 @@ const EquipmentTable = () => {
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
-  const moveRow = (id: string, direction: -1 | 1) => {
-    setRows((prev) =>
-      moveItem(
-        prev,
-        prev.findIndex((row) => row.id === id),
-        direction
-      )
-    );
-  };
 
   const addColumn = () => setColumns((prev) => [...prev, createColumn(`列${prev.length + 1}`)]);
   const removeColumn = (id: string) => {
@@ -125,14 +214,24 @@ const EquipmentTable = () => {
       })
     );
   };
-  const handleColumnDragEnd = (event: DragEndEvent) => {
+
+  const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    setColumns((prev) => {
-      const oldIndex = prev.findIndex((column) => column.id === active.id);
-      const newIndex = prev.findIndex((column) => column.id === over.id);
-      return arrayMove(prev, oldIndex, newIndex);
-    });
+    const activeId = String(active.id);
+    if (activeId.startsWith('row-')) {
+      setRows((prev) => {
+        const oldIndex = prev.findIndex((row) => row.id === active.id);
+        const newIndex = prev.findIndex((row) => row.id === over.id);
+        return arrayMove(prev, oldIndex, newIndex);
+      });
+    } else {
+      setColumns((prev) => {
+        const oldIndex = prev.findIndex((column) => column.id === active.id);
+        const newIndex = prev.findIndex((column) => column.id === over.id);
+        return arrayMove(prev, oldIndex, newIndex);
+      });
+    }
   };
 
   const updateRow = (id: string, patch: Partial<EquipmentRow>) => {
@@ -149,11 +248,11 @@ const EquipmentTable = () => {
 
   return (
     <DndContext
-      id="equipment-table-columns"
+      id="equipment-table"
       sensors={sensors}
       collisionDetection={closestCenter}
-      modifiers={[restrictToHorizontalAxis]}
-      onDragEnd={handleColumnDragEnd}
+      modifiers={[restrictAxisByDraggedType]}
+      onDragEnd={handleDragEnd}
     >
       <Box p={2}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
@@ -192,92 +291,19 @@ const EquipmentTable = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {rows.map((row, index) => (
-                <TableRow key={row.id}>
-                  <TableCell>
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Typography variant="caption" color="text.secondary">
-                        {index + 1}
-                      </Typography>
-                      <IconButton
-                        size="small"
-                        onClick={() => moveRow(row.id, -1)}
-                        disabled={index === 0}
-                        title="行を上に移動"
-                      >
-                        <KeyboardArrowUpIcon fontSize="small" />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={() => moveRow(row.id, 1)}
-                        disabled={index === rows.length - 1}
-                        title="行を下に移動"
-                      >
-                        <KeyboardArrowDownIcon fontSize="small" />
-                      </IconButton>
-                      <IconButton size="small" onClick={() => removeRow(row.id)} title="行を削除">
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <TextField
-                      value={row.kind}
-                      onChange={(e) => updateRow(row.id, { kind: e.target.value })}
-                      variant="standard"
-                      size="small"
-                      fullWidth
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Autocomplete
-                      freeSolo
-                      size="small"
-                      options={EQUIPMENT_NAME_OPTIONS}
-                      inputValue={row.name}
-                      onInputChange={(_event, value) => updateRow(row.id, { name: value })}
-                      renderInput={(params) => <TextField {...params} variant="standard" />}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <TextField
-                      value={row.remark}
-                      onChange={(e) => updateRow(row.id, { remark: e.target.value })}
-                      variant="standard"
-                      size="small"
-                      fullWidth
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">{getTotal(row)}</Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">{getActiveSum(row)}</Typography>
-                  </TableCell>
-                  <TableCell>
-                    <TextField
-                      value={row.spare}
-                      onChange={(e) => updateRow(row.id, { spare: e.target.value })}
-                      variant="standard"
-                      size="small"
-                      type="number"
-                      sx={{ width: 64 }}
-                    />
-                  </TableCell>
-                  {columns.map((column) => (
-                    <TableCell key={column.id}>
-                      <TextField
-                        value={row.qty[column.id] ?? ''}
-                        onChange={(e) => updateQty(row.id, column.id, e.target.value)}
-                        variant="standard"
-                        size="small"
-                        type="number"
-                        sx={{ width: 64 }}
-                      />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
+              <SortableContext items={rows.map((row) => row.id)} strategy={verticalListSortingStrategy}>
+                {rows.map((row, index) => (
+                  <EquipmentRowView
+                    key={row.id}
+                    row={row}
+                    index={index}
+                    columns={columns}
+                    onUpdateRow={(patch) => updateRow(row.id, patch)}
+                    onUpdateQty={(columnId, value) => updateQty(row.id, columnId, value)}
+                    onRemoveRow={() => removeRow(row.id)}
+                  />
+                ))}
+              </SortableContext>
             </TableBody>
           </Table>
         </TableContainer>
