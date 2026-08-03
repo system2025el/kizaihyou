@@ -148,36 +148,37 @@ const EquipmentTable = () => {
   };
 
   return (
-    <Box p={2}>
-      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-        <Typography variant="h5">機材表（モック）</Typography>
-        <Box display="flex" gap={1}>
-          <Button startIcon={<AddIcon />} onClick={addRow}>
-            行を追加
-          </Button>
-          <Button startIcon={<AddIcon />} onClick={addColumn}>
-            列を追加
-          </Button>
+    <DndContext
+      id="equipment-table-columns"
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToHorizontalAxis]}
+      onDragEnd={handleColumnDragEnd}
+    >
+      <Box p={2}>
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+          <Typography variant="h5">機材表（モック）</Typography>
+          <Box display="flex" gap={1}>
+            <Button startIcon={<AddIcon />} onClick={addRow}>
+              行を追加
+            </Button>
+            <Button startIcon={<AddIcon />} onClick={addColumn}>
+              列を追加
+            </Button>
+          </Box>
         </Box>
-      </Box>
 
-      <TableContainer sx={{ maxHeight: '80vh' }}>
-        <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ minWidth: 130 }} />
-              <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
-              <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
-              <TableCell sx={{ minWidth: 160 }}>備考</TableCell>
-              <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
-              <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
-              <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                modifiers={[restrictToHorizontalAxis]}
-                onDragEnd={handleColumnDragEnd}
-              >
+        <TableContainer sx={{ maxHeight: '80vh' }}>
+          <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ minWidth: 130 }} />
+                <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
+                <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
+                <TableCell sx={{ minWidth: 160 }}>備考</TableCell>
+                <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
+                <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
+                <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
                 <SortableContext items={columns.map((column) => column.id)} strategy={horizontalListSortingStrategy}>
                   {columns.map((column) => (
                     <ColumnHeaderCell
@@ -188,100 +189,100 @@ const EquipmentTable = () => {
                     />
                   ))}
                 </SortableContext>
-              </DndContext>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {rows.map((row, index) => (
-              <TableRow key={row.id}>
-                <TableCell>
-                  <Box display="flex" alignItems="center" gap={0.5}>
-                    <Typography variant="caption" color="text.secondary">
-                      {index + 1}
-                    </Typography>
-                    <IconButton
-                      size="small"
-                      onClick={() => moveRow(row.id, -1)}
-                      disabled={index === 0}
-                      title="行を上に移動"
-                    >
-                      <KeyboardArrowUpIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      onClick={() => moveRow(row.id, 1)}
-                      disabled={index === rows.length - 1}
-                      title="行を下に移動"
-                    >
-                      <KeyboardArrowDownIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton size="small" onClick={() => removeRow(row.id)} title="行を削除">
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <TextField
-                    value={row.kind}
-                    onChange={(e) => updateRow(row.id, { kind: e.target.value })}
-                    variant="standard"
-                    size="small"
-                    fullWidth
-                  />
-                </TableCell>
-                <TableCell>
-                  <Autocomplete
-                    freeSolo
-                    size="small"
-                    options={EQUIPMENT_NAME_OPTIONS}
-                    inputValue={row.name}
-                    onInputChange={(_event, value) => updateRow(row.id, { name: value })}
-                    renderInput={(params) => <TextField {...params} variant="standard" />}
-                  />
-                </TableCell>
-                <TableCell>
-                  <TextField
-                    value={row.remark}
-                    onChange={(e) => updateRow(row.id, { remark: e.target.value })}
-                    variant="standard"
-                    size="small"
-                    fullWidth
-                  />
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2">{getTotal(row)}</Typography>
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2">{getActiveSum(row)}</Typography>
-                </TableCell>
-                <TableCell>
-                  <TextField
-                    value={row.spare}
-                    onChange={(e) => updateRow(row.id, { spare: e.target.value })}
-                    variant="standard"
-                    size="small"
-                    type="number"
-                    sx={{ width: 64 }}
-                  />
-                </TableCell>
-                {columns.map((column) => (
-                  <TableCell key={column.id}>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((row, index) => (
+                <TableRow key={row.id}>
+                  <TableCell>
+                    <Box display="flex" alignItems="center" gap={0.5}>
+                      <Typography variant="caption" color="text.secondary">
+                        {index + 1}
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        onClick={() => moveRow(row.id, -1)}
+                        disabled={index === 0}
+                        title="行を上に移動"
+                      >
+                        <KeyboardArrowUpIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        onClick={() => moveRow(row.id, 1)}
+                        disabled={index === rows.length - 1}
+                        title="行を下に移動"
+                      >
+                        <KeyboardArrowDownIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton size="small" onClick={() => removeRow(row.id)} title="行を削除">
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </TableCell>
+                  <TableCell>
                     <TextField
-                      value={row.qty[column.id] ?? ''}
-                      onChange={(e) => updateQty(row.id, column.id, e.target.value)}
+                      value={row.kind}
+                      onChange={(e) => updateRow(row.id, { kind: e.target.value })}
+                      variant="standard"
+                      size="small"
+                      fullWidth
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Autocomplete
+                      freeSolo
+                      size="small"
+                      options={EQUIPMENT_NAME_OPTIONS}
+                      inputValue={row.name}
+                      onInputChange={(_event, value) => updateRow(row.id, { name: value })}
+                      renderInput={(params) => <TextField {...params} variant="standard" />}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <TextField
+                      value={row.remark}
+                      onChange={(e) => updateRow(row.id, { remark: e.target.value })}
+                      variant="standard"
+                      size="small"
+                      fullWidth
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{getTotal(row)}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{getActiveSum(row)}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <TextField
+                      value={row.spare}
+                      onChange={(e) => updateRow(row.id, { spare: e.target.value })}
                       variant="standard"
                       size="small"
                       type="number"
                       sx={{ width: 64 }}
                     />
                   </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    </Box>
+                  {columns.map((column) => (
+                    <TableCell key={column.id}>
+                      <TextField
+                        value={row.qty[column.id] ?? ''}
+                        onChange={(e) => updateQty(row.id, column.id, e.target.value)}
+                        variant="standard"
+                        size="small"
+                        type="number"
+                        sx={{ width: 64 }}
+                      />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Box>
+    </DndContext>
   );
 };
 export default EquipmentTable;
