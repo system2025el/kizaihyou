@@ -25,8 +25,9 @@ import {
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
-import { INITIAL_EQUIPMENT_TABLE_LIST, STATUS_COLOR } from '../_lib/mock-data';
-import { EquipmentTableListRow } from '../_lib/types';
+import { STATUS_COLOR } from '@/app/_lib/equipment-table-list/mock-data';
+import { useEquipmentTableListStore } from '@/app/_lib/equipment-table-list/store';
+import { EquipmentTableListRow } from '@/app/_lib/equipment-table-list/types';
 
 let copyIdCounter = 0;
 
@@ -39,7 +40,8 @@ const matchesQuery = (row: EquipmentTableListRow, query: string) => {
 
 const EquipmentTableList = () => {
   const router = useRouter();
-  const [rows, setRows] = useState<EquipmentTableListRow[]>(INITIAL_EQUIPMENT_TABLE_LIST);
+  const rows = useEquipmentTableListStore((state) => state.rows);
+  const addRow = useEquipmentTableListStore((state) => state.addRow);
   const [historyTarget, setHistoryTarget] = useState<EquipmentTableListRow | null>(null);
   const [query, setQuery] = useState('');
 
@@ -72,7 +74,7 @@ const EquipmentTableList = () => {
       salesStaffName: source.salesStaffName,
       history: [{ at: nowText, user: source.salesStaffName, action: `${source.id}からコピーして新規作成` }],
     };
-    setRows((prev) => [copied, ...prev]);
+    addRow(copied);
     router.push('/equipment-table');
   };
 
