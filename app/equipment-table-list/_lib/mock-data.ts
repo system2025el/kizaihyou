@@ -1,0 +1,90 @@
+import { EquipmentTableListRow, EquipmentTableStatus } from './types';
+
+// モックの機材表履歴データ。実際のバックエンド連携はまだ無い。
+export const INITIAL_EQUIPMENT_TABLE_LIST: EquipmentTableListRow[] = [
+  {
+    id: 'KZ-0005',
+    eventName: 'AIMYON 甲子園',
+    place: '幕張/甲子園',
+    clientName: 'リコライトデザイン',
+    createdAt: '2026/06/29 12:20',
+    updatedAt: '2026/07/23 12:20',
+    shippedAt: '2026/07/28',
+    returnedAt: '2026/08/08',
+    status: '出庫済',
+    salesStaffName: '田中 一郎',
+    history: [
+      { at: '2026/06/29 12:20', user: '田中 一郎', action: '新規作成' },
+      { at: '2026/07/20 10:00', user: '田中 一郎', action: '機材内容を更新' },
+      { at: '2026/07/23 12:20', user: '佐藤 花子', action: '出庫日を確定' },
+    ],
+  },
+  {
+    id: 'KZ-0004',
+    eventName: '肉チョモランマ『大決戦』',
+    place: 'K ARENA YOKOHAMA',
+    clientName: 'エストファーム',
+    createdAt: '2026/06/30 09:00',
+    updatedAt: '2026/07/23 12:21',
+    shippedAt: '2026/07/03',
+    returnedAt: '2026/07/05',
+    status: '返却済',
+    salesStaffName: '佐藤 花子',
+    history: [
+      { at: '2026/06/30 09:00', user: '佐藤 花子', action: '新規作成' },
+      { at: '2026/07/05 18:00', user: '佐藤 花子', action: '入庫日を確定' },
+    ],
+  },
+  {
+    id: 'KZ-0003',
+    eventName: '○○フェスティバル2026',
+    place: '幕張メッセ',
+    clientName: '△△エンタテインメント',
+    createdAt: '2026/06/15 10:00',
+    updatedAt: '2026/06/20 15:30',
+    shippedAt: null,
+    returnedAt: null,
+    status: '確定',
+    salesStaffName: '鈴木 次郎',
+    history: [
+      { at: '2026/06/15 10:00', user: '鈴木 次郎', action: '新規作成' },
+      { at: '2026/06/20 15:30', user: '鈴木 次郎', action: '内容を確定' },
+    ],
+  },
+  {
+    id: 'KZ-0002',
+    eventName: '□□コンサートツアー',
+    place: '日本武道館',
+    clientName: '××プロダクション',
+    createdAt: '2026/05/10 11:00',
+    updatedAt: '2026/05/12 09:00',
+    shippedAt: null,
+    returnedAt: null,
+    status: '作成中',
+    salesStaffName: '高橋 美咲',
+    history: [{ at: '2026/05/10 11:00', user: '高橋 美咲', action: '新規作成' }],
+  },
+  {
+    id: 'KZ-0001',
+    eventName: 'サンプル公演',
+    place: 'テストホール',
+    clientName: 'サンプル株式会社',
+    createdAt: '2026/04/01 09:00',
+    updatedAt: '2026/04/01 09:00',
+    shippedAt: '2026/04/10',
+    returnedAt: '2026/04/12',
+    status: '返却済',
+    salesStaffName: '伊藤 健太',
+    history: [
+      { at: '2026/04/01 09:00', user: '伊藤 健太', action: '新規作成' },
+      { at: '2026/04/12 17:00', user: '伊藤 健太', action: '入庫日を確定' },
+    ],
+  },
+];
+
+export const STATUS_COLOR: Record<EquipmentTableStatus, 'default' | 'info' | 'warning' | 'success'> = {
+  作成中: 'default',
+  確定: 'info',
+  出庫済: 'warning',
+  返却済: 'success',
+};

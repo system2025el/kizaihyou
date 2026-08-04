@@ -1,4 +1,6 @@
+import { redirect } from 'next/navigation';
+
 const Page = () => {
-  return <div>kizaihyou</div>;
+  redirect('/equipment-table-list');
 };
 export default Page;
