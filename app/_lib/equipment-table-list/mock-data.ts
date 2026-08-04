@@ -42,8 +42,8 @@ export const INITIAL_EQUIPMENT_TABLE_LIST: EquipmentTableListRow[] = [
     clientName: '△△エンタテインメント',
     createdAt: '2026/06/15 10:00',
     updatedAt: '2026/06/20 15:30',
-    shippedAt: null,
-    returnedAt: null,
+    shippedAt: '2026/08/31',
+    returnedAt: '2026/09/14',
     status: '申請中',
     salesStaffName: '鈴木 次郎',
     history: [

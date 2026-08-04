@@ -29,9 +29,10 @@ import {
 } from '@mui/material';
 import { useState } from 'react';
 
+import { MemoTooltip } from '@/app/_ui/memo-tooltip';
+
 import { DEFAULT_COLUMN_LABELS, EQUIPMENT_NAME_OPTIONS } from '../_lib/mock-data';
 import { EquipmentColumn, EquipmentRow } from '../_lib/types';
-import { MemoTooltip } from './memo-tooltip';
 
 const INITIAL_ROW_COUNT = 10;
 
