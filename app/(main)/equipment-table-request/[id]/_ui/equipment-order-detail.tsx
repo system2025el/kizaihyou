@@ -3,7 +3,12 @@
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import {
   Box,
+  Button,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Table,
   TableBody,
@@ -32,13 +37,44 @@ const TOTAL_COLUMN_COLOR = '#E3F2FD';
 // 固定列(左側)の累積オフセット。sticky配置に使う。
 const STICKY_LEFT = { select: 0, memo: 40, name: 80, total: 300, ordered: 360, spare: 430, contact: 500 };
 
+// 本来はログイン中の受注部担当者名。現状は認証と連携していないため仮の値。
+const APPROVER_NAME = '承認担当者';
+
+const nowText = () =>
+  new Date().toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
 type Props = { id: string };
 
 const EquipmentOrderDetail = ({ id }: Props) => {
   const router = useRouter();
   const listRow = useEquipmentTableListStore((state) => state.rows.find((row) => row.id === id));
+  const setStatus = useEquipmentTableListStore((state) => state.setStatus);
   const [rows, setRows] = useState<EquipmentOrderRow[]>(EQUIPMENT_ORDER_ROWS);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [actionType, setActionType] = useState<'承認' | '差戻し' | null>(null);
+  const [comment, setComment] = useState('');
+
+  const openAction = (type: '承認' | '差戻し') => {
+    setComment('');
+    setActionType(type);
+  };
+
+  const handleConfirmAction = () => {
+    if (!actionType || !listRow) return;
+    setStatus(listRow.id, actionType === '承認' ? '承認済' : '差戻し', {
+      at: nowText(),
+      user: APPROVER_NAME,
+      action: comment ? `${actionType}: ${comment}` : actionType,
+    });
+    setActionType(null);
+    router.push('/equipment-table-request');
+  };
 
   const updateRow = (rowId: string, patch: Partial<EquipmentOrderRow>) => {
     setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
@@ -80,18 +116,28 @@ const EquipmentOrderDetail = ({ id }: Props) => {
 
   return (
     <Box p={2}>
-      <Box display="flex" alignItems="center" gap={1} mb={2}>
-        <IconButton onClick={() => router.push('/equipment-table-request')} title="一覧に戻る">
-          <ArrowBackIcon />
-        </IconButton>
-        <Box>
-          <Typography variant="h5">
-            {listRow.id} {listRow.eventName} の受注明細（機材）
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {listRow.place} ／ {listRow.clientName} ／ 出庫日 {listRow.shippedAt ?? '-'} ／ 入庫日{' '}
-            {listRow.returnedAt ?? '-'}
-          </Typography>
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+        <Box display="flex" alignItems="center" gap={1}>
+          <IconButton onClick={() => router.push('/equipment-table-request')} title="一覧に戻る">
+            <ArrowBackIcon />
+          </IconButton>
+          <Box>
+            <Typography variant="h5">
+              {listRow.id} {listRow.eventName} の受注明細（機材）
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {listRow.place} ／ {listRow.clientName} ／ 出庫日 {listRow.shippedAt ?? '-'} ／ 入庫日{' '}
+              {listRow.returnedAt ?? '-'}
+            </Typography>
+          </Box>
+        </Box>
+        <Box display="flex" gap={1}>
+          <Button variant="contained" color="success" onClick={() => openAction('承認')}>
+            承認
+          </Button>
+          <Button variant="outlined" color="error" onClick={() => openAction('差戻し')}>
+            差し戻し
+          </Button>
         </Box>
       </Box>
 
@@ -259,6 +305,29 @@ const EquipmentOrderDetail = ({ id }: Props) => {
           </TableBody>
         </Table>
       </TableContainer>
+
+      <Dialog open={actionType !== null} onClose={() => setActionType(null)}>
+        <DialogTitle fontSize="medium">
+          {listRow.id} {listRow.eventName} を{actionType}
+        </DialogTitle>
+        <DialogContent>
+          <TextField
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            label="コメント（任意）"
+            fullWidth
+            multiline
+            minRows={3}
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleConfirmAction} variant="contained" color={actionType === '承認' ? 'success' : 'error'}>
+            {actionType}する
+          </Button>
+          <Button onClick={() => setActionType(null)}>キャンセル</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
