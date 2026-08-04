@@ -3,6 +3,7 @@
 import AddIcon from '@mui/icons-material/Add';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HistoryIcon from '@mui/icons-material/History';
+import SearchIcon from '@mui/icons-material/Search';
 import {
   Box,
   Button,
@@ -11,12 +12,14 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  InputAdornment,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from '@mui/material';
 import { useRouter } from 'next/navigation';
@@ -27,10 +30,20 @@ import { EquipmentTableListRow } from '../_lib/types';
 
 let copyIdCounter = 0;
 
+const matchesQuery = (row: EquipmentTableListRow, query: string) => {
+  const target = [row.id, row.eventName, row.place, row.clientName, row.salesStaffName, row.status]
+    .join(' ')
+    .toLowerCase();
+  return target.includes(query.toLowerCase());
+};
+
 const EquipmentTableList = () => {
   const router = useRouter();
   const [rows, setRows] = useState<EquipmentTableListRow[]>(INITIAL_EQUIPMENT_TABLE_LIST);
   const [historyTarget, setHistoryTarget] = useState<EquipmentTableListRow | null>(null);
+  const [query, setQuery] = useState('');
+
+  const filteredRows = query.trim() ? rows.filter((row) => matchesQuery(row, query.trim())) : rows;
 
   const handleCreateNew = () => {
     router.push('/equipment-table');
@@ -72,6 +85,24 @@ const EquipmentTableList = () => {
         </Button>
       </Box>
 
+      <TextField
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="機材表ID・公演名・場所・顧客名・担当者名・ステータスで検索"
+        size="small"
+        fullWidth
+        sx={{ mb: 2 }}
+        slotProps={{
+          input: {
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" />
+              </InputAdornment>
+            ),
+          },
+        }}
+      />
+
       <TableContainer>
         <Table stickyHeader size="small">
           <TableHead>
@@ -91,7 +122,14 @@ const EquipmentTableList = () => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((row) => (
+            {filteredRows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={12} align="center">
+                  該当する機材表がありません
+                </TableCell>
+              </TableRow>
+            )}
+            {filteredRows.map((row) => (
               <TableRow key={row.id} hover>
                 <TableCell>{row.id}</TableCell>
                 <TableCell>{row.eventName}</TableCell>

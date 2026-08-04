@@ -1,4 +1,4 @@
-export type EquipmentTableStatus = '作成中' | '確定' | '出庫済' | '返却済';
+export type EquipmentTableStatus = '作成中' | '申請中' | '差戻し' | '承認済';
 
 export type EquipmentTableHistoryEntry = {
   at: string;

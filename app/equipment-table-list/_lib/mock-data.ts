@@ -11,12 +11,12 @@ export const INITIAL_EQUIPMENT_TABLE_LIST: EquipmentTableListRow[] = [
     updatedAt: '2026/07/23 12:20',
     shippedAt: '2026/07/28',
     returnedAt: '2026/08/08',
-    status: '出庫済',
+    status: '承認済',
     salesStaffName: '田中 一郎',
     history: [
       { at: '2026/06/29 12:20', user: '田中 一郎', action: '新規作成' },
-      { at: '2026/07/20 10:00', user: '田中 一郎', action: '機材内容を更新' },
-      { at: '2026/07/23 12:20', user: '佐藤 花子', action: '出庫日を確定' },
+      { at: '2026/07/20 10:00', user: '田中 一郎', action: '申請' },
+      { at: '2026/07/23 12:20', user: '佐藤 花子', action: '承認' },
     ],
   },
   {
@@ -28,11 +28,11 @@ export const INITIAL_EQUIPMENT_TABLE_LIST: EquipmentTableListRow[] = [
     updatedAt: '2026/07/23 12:21',
     shippedAt: '2026/07/03',
     returnedAt: '2026/07/05',
-    status: '返却済',
+    status: '承認済',
     salesStaffName: '佐藤 花子',
     history: [
       { at: '2026/06/30 09:00', user: '佐藤 花子', action: '新規作成' },
-      { at: '2026/07/05 18:00', user: '佐藤 花子', action: '入庫日を確定' },
+      { at: '2026/07/05 18:00', user: '佐藤 花子', action: '承認' },
     ],
   },
   {
@@ -44,11 +44,11 @@ export const INITIAL_EQUIPMENT_TABLE_LIST: EquipmentTableListRow[] = [
     updatedAt: '2026/06/20 15:30',
     shippedAt: null,
     returnedAt: null,
-    status: '確定',
+    status: '申請中',
     salesStaffName: '鈴木 次郎',
     history: [
       { at: '2026/06/15 10:00', user: '鈴木 次郎', action: '新規作成' },
-      { at: '2026/06/20 15:30', user: '鈴木 次郎', action: '内容を確定' },
+      { at: '2026/06/20 15:30', user: '鈴木 次郎', action: '申請' },
     ],
   },
   {
@@ -73,18 +73,19 @@ export const INITIAL_EQUIPMENT_TABLE_LIST: EquipmentTableListRow[] = [
     updatedAt: '2026/04/01 09:00',
     shippedAt: '2026/04/10',
     returnedAt: '2026/04/12',
-    status: '返却済',
+    status: '差戻し',
     salesStaffName: '伊藤 健太',
     history: [
       { at: '2026/04/01 09:00', user: '伊藤 健太', action: '新規作成' },
-      { at: '2026/04/12 17:00', user: '伊藤 健太', action: '入庫日を確定' },
+      { at: '2026/04/10 10:00', user: '伊藤 健太', action: '申請' },
+      { at: '2026/04/12 17:00', user: '田中 一郎', action: '差戻し' },
     ],
   },
 ];
 
-export const STATUS_COLOR: Record<EquipmentTableStatus, 'default' | 'info' | 'warning' | 'success'> = {
+export const STATUS_COLOR: Record<EquipmentTableStatus, 'default' | 'info' | 'error' | 'success'> = {
   作成中: 'default',
-  確定: 'info',
-  出庫済: 'warning',
-  返却済: 'success',
+  申請中: 'info',
+  差戻し: 'error',
+  承認済: 'success',
 };
