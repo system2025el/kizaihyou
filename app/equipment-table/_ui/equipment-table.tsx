@@ -29,10 +29,9 @@ import {
 } from '@mui/material';
 import { useState } from 'react';
 
+import { DEFAULT_COLUMN_LABELS, EQUIPMENT_NAME_OPTIONS } from '@/app/_lib/equipment-table/mock-data';
+import { EquipmentColumn, EquipmentRow } from '@/app/_lib/equipment-table/types';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
-
-import { DEFAULT_COLUMN_LABELS, EQUIPMENT_NAME_OPTIONS } from '../_lib/mock-data';
-import { EquipmentColumn, EquipmentRow } from '../_lib/types';
 
 const INITIAL_ROW_COUNT = 10;
 
@@ -53,8 +52,20 @@ const createColumn = (label: string): EquipmentColumn => {
   return { id: `col-${columnIdCounter}`, label };
 };
 
-const initialColumns = DEFAULT_COLUMN_LABELS.map(createColumn);
-const initialRows = Array.from({ length: INITIAL_ROW_COUNT }, createRow);
+const createDefaultColumns = () => DEFAULT_COLUMN_LABELS.map(createColumn);
+const createDefaultRows = () => Array.from({ length: INITIAL_ROW_COUNT }, createRow);
+
+// 既存データ(読み込んだ機材表の内容など)に含まれるidより後の番号から
+// 採番が続くようカウンタを底上げする。衝突したidの重複描画を防ぐため。
+const bumpCounterPastIds = (ids: string[], prefix: string, current: number) => {
+  let max = current;
+  for (const id of ids) {
+    if (!id.startsWith(prefix)) continue;
+    const num = Number(id.slice(prefix.length));
+    if (!Number.isNaN(num) && num > max) max = num;
+  }
+  return max;
+};
 
 // 行(row-*)は縦方向、列(col-*)は横方向のみに移動を制限する
 const restrictAxisByDraggedType: Modifier = (args) => {
@@ -191,9 +202,31 @@ const EquipmentRowView = ({ row, index, columns, onUpdateRow, onUpdateQty, onRem
   );
 };
 
-const EquipmentTable = () => {
-  const [columns, setColumns] = useState<EquipmentColumn[]>(initialColumns);
-  const [rows, setRows] = useState<EquipmentRow[]>(initialRows);
+type EquipmentTableProps = {
+  title?: string;
+  initialColumns?: EquipmentColumn[];
+  initialRows?: EquipmentRow[];
+};
+
+const EquipmentTable = ({ title, initialColumns, initialRows }: EquipmentTableProps) => {
+  const [columns, setColumns] = useState<EquipmentColumn[]>(() => {
+    const cols = initialColumns ?? createDefaultColumns();
+    columnIdCounter = bumpCounterPastIds(
+      cols.map((c) => c.id),
+      'col-',
+      columnIdCounter
+    );
+    return cols;
+  });
+  const [rows, setRows] = useState<EquipmentRow[]>(() => {
+    const rws = initialRows ?? createDefaultRows();
+    rowIdCounter = bumpCounterPastIds(
+      rws.map((r) => r.id),
+      'row-',
+      rowIdCounter
+    );
+    return rws;
+  });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
@@ -252,7 +285,7 @@ const EquipmentTable = () => {
     >
       <Box p={2}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-          <Typography variant="h5">機材表（モック）</Typography>
+          <Typography variant="h5">{title ?? '機材表（モック）'}</Typography>
           <Box display="flex" gap={1}>
             <Button startIcon={<AddIcon />} onClick={addRow}>
               行を追加

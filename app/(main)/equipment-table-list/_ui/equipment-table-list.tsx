@@ -13,6 +13,7 @@ import {
   DialogTitle,
   IconButton,
   InputAdornment,
+  Link,
   Table,
   TableBody,
   TableCell,
@@ -73,9 +74,10 @@ const EquipmentTableList = () => {
       status: '作成中',
       salesStaffName: source.salesStaffName,
       history: [{ at: nowText, user: source.salesStaffName, action: `${source.id}からコピーして新規作成` }],
+      content: source.content,
     };
     addRow(copied);
-    router.push('/equipment-table');
+    router.push(`/equipment-table/${copied.id}`);
   };
 
   return (
@@ -134,7 +136,11 @@ const EquipmentTableList = () => {
             {filteredRows.map((row) => (
               <TableRow key={row.id} hover>
                 <TableCell>{row.id}</TableCell>
-                <TableCell>{row.eventName}</TableCell>
+                <TableCell>
+                  <Link component="button" onClick={() => router.push(`/equipment-table/${row.id}`)} underline="hover">
+                    {row.eventName}
+                  </Link>
+                </TableCell>
                 <TableCell>{row.place}</TableCell>
                 <TableCell>{row.clientName}</TableCell>
                 <TableCell>{row.createdAt}</TableCell>
