@@ -2,6 +2,7 @@
 
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import {
+  Alert,
   Box,
   Button,
   Checkbox,
@@ -22,11 +23,12 @@ import {
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
-import { useEquipmentTableListStore } from '@/app/_lib/equipment-table-list/store';
+import { EquipmentTableDetail } from '@/app/_lib/equipment-table/funcs';
+import { approveEquipmentTable, rejectEquipmentTable } from '@/app/_lib/equipment-table-list/funcs';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
 
 import { addDays, buildDateList, formatMd, isSameDay, parseDisplayDate } from '../_lib/date-utils';
-import { EQUIPMENT_ORDER_ROWS } from '../_lib/mock-data';
+import { MOCK_BASE_STOCK } from '../_lib/mock-data';
 import { EquipmentOrderRow } from '../_lib/types';
 
 const RANGE_START_COLOR = '#BBDEFB';
@@ -37,43 +39,52 @@ const TOTAL_COLUMN_COLOR = '#E3F2FD';
 // 固定列(左側)の累積オフセット。sticky配置に使う。
 const STICKY_LEFT = { select: 0, memo: 40, name: 80, total: 300, ordered: 360, spare: 430, contact: 500 };
 
-// 本来はログイン中の受注部担当者名。現状は認証と連携していないため仮の値。
-const APPROVER_NAME = '承認担当者';
+/** 機材表の行を受注明細（機材）の行に読み替える。名称未入力の行は対象外。 */
+const toOrderRows = (detail: EquipmentTableDetail): EquipmentOrderRow[] =>
+  detail.rows
+    .filter((row) => row.name.trim() !== '')
+    .map((row) => ({
+      id: row.id,
+      kizaiName: row.name,
+      mem: row.remark,
+      mem2: '',
+      orderedQty: Object.values(row.qty).reduce((sum, value) => sum + (Number(value) || 0), 0),
+      spareQty: Number(row.spare) || 0,
+      baseStock: MOCK_BASE_STOCK,
+    }));
 
-const nowText = () =>
-  new Date().toLocaleString('ja-JP', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+type Props = { detail: EquipmentTableDetail };
 
-type Props = { id: string };
-
-const EquipmentOrderDetail = ({ id }: Props) => {
+const EquipmentOrderDetail = ({ detail }: Props) => {
   const router = useRouter();
-  const listRow = useEquipmentTableListStore((state) => state.rows.find((row) => row.id === id));
-  const setStatus = useEquipmentTableListStore((state) => state.setStatus);
-  const [rows, setRows] = useState<EquipmentOrderRow[]>(EQUIPMENT_ORDER_ROWS);
+  const [rows, setRows] = useState<EquipmentOrderRow[]>(() => toOrderRows(detail));
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [actionType, setActionType] = useState<'承認' | '差戻し' | null>(null);
   const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   const openAction = (type: '承認' | '差戻し') => {
     setComment('');
+    setError('');
     setActionType(type);
   };
 
-  const handleConfirmAction = () => {
-    if (!actionType || !listRow) return;
-    setStatus(listRow.id, actionType === '承認' ? '承認済' : '差戻し', {
-      at: nowText(),
-      user: APPROVER_NAME,
-      action: comment ? `${actionType}: ${comment}` : actionType,
-    });
-    setActionType(null);
-    router.push('/equipment-table-request');
+  const handleConfirmAction = async () => {
+    if (!actionType) return;
+    setBusy(true);
+    try {
+      if (actionType === '承認') {
+        await approveEquipmentTable(detail.id, comment);
+      } else {
+        await rejectEquipmentTable(detail.id, comment);
+      }
+      setActionType(null);
+      router.push('/equipment-table-request');
+    } catch {
+      setError(`${actionType}に失敗しました。`);
+      setBusy(false);
+    }
   };
 
   const updateRow = (rowId: string, patch: Partial<EquipmentOrderRow>) => {
@@ -85,21 +96,13 @@ const EquipmentOrderDetail = ({ id }: Props) => {
   };
 
   const { dateList, rangeStart, rangeEnd } = useMemo(() => {
-    if (!listRow?.shippedAt || !listRow?.returnedAt) {
+    if (!detail.head.shippedAt || !detail.head.returnedAt) {
       return { dateList: [] as Date[], rangeStart: null as Date | null, rangeEnd: null as Date | null };
     }
-    const start = parseDisplayDate(listRow.shippedAt);
-    const end = parseDisplayDate(listRow.returnedAt);
+    const start = parseDisplayDate(detail.head.shippedAt);
+    const end = parseDisplayDate(detail.head.returnedAt);
     return { dateList: buildDateList(addDays(start, -1), addDays(end, 8)), rangeStart: start, rangeEnd: end };
-  }, [listRow]);
-
-  if (!listRow) {
-    return (
-      <Box p={2}>
-        <Typography>対象の機材表が見つかりません。</Typography>
-      </Box>
-    );
-  }
+  }, [detail.head.shippedAt, detail.head.returnedAt]);
 
   const isInRange = (date: Date) =>
     rangeStart !== null &&
@@ -123,23 +126,29 @@ const EquipmentOrderDetail = ({ id }: Props) => {
           </IconButton>
           <Box>
             <Typography variant="h5">
-              {listRow.id} {listRow.eventName} の受注明細（機材）
+              {detail.cod} {detail.head.eventName} の受注明細（機材）
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {listRow.place} ／ {listRow.clientName} ／ 出庫日 {listRow.shippedAt ?? '-'} ／ 入庫日{' '}
-              {listRow.returnedAt ?? '-'}
+              {detail.head.place} ／ {detail.head.clientName} ／ 出庫日 {detail.head.shippedAt || '-'} ／ 入庫日{' '}
+              {detail.head.returnedAt || '-'}
             </Typography>
           </Box>
         </Box>
         <Box display="flex" gap={1}>
-          <Button variant="contained" color="success" onClick={() => openAction('承認')}>
+          <Button variant="contained" color="success" onClick={() => openAction('承認')} disabled={busy}>
             承認
           </Button>
-          <Button variant="outlined" color="error" onClick={() => openAction('差戻し')}>
+          <Button variant="outlined" color="error" onClick={() => openAction('差戻し')} disabled={busy}>
             差し戻し
           </Button>
         </Box>
       </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
 
       <TableContainer sx={{ maxHeight: '80vh' }}>
         <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
@@ -232,6 +241,13 @@ const EquipmentOrderDetail = ({ id }: Props) => {
             </TableRow>
           </TableHead>
           <TableBody>
+            {rows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={7 + dateList.length} align="center">
+                  機材が登録されていません
+                </TableCell>
+              </TableRow>
+            )}
             {rows.map((row) => {
               const total = row.orderedQty + row.spareQty;
               return (
@@ -308,7 +324,7 @@ const EquipmentOrderDetail = ({ id }: Props) => {
 
       <Dialog open={actionType !== null} onClose={() => setActionType(null)}>
         <DialogTitle fontSize="medium">
-          {listRow.id} {listRow.eventName} を{actionType}
+          {detail.cod} {detail.head.eventName} を{actionType}
         </DialogTitle>
         <DialogContent>
           <TextField
@@ -322,7 +338,12 @@ const EquipmentOrderDetail = ({ id }: Props) => {
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleConfirmAction} variant="contained" color={actionType === '承認' ? 'success' : 'error'}>
+          <Button
+            onClick={handleConfirmAction}
+            variant="contained"
+            color={actionType === '承認' ? 'success' : 'error'}
+            disabled={busy}
+          >
             {actionType}する
           </Button>
           <Button onClick={() => setActionType(null)}>キャンセル</Button>

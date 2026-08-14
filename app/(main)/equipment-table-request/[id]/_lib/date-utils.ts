@@ -1,5 +1,6 @@
+/** 「YYYY-MM-DD」「YYYY/MM/DD」どちらの表記でもDateに変換する */
 export const parseDisplayDate = (value: string) => {
-  const [year, month, day] = value.split('/').map(Number);
+  const [year, month, day] = value.split(/[-/]/).map(Number);
   return new Date(year, month - 1, day);
 };
 

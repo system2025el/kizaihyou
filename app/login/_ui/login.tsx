@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { TextFieldElement, useForm } from 'react-hook-form-mui';
 
-import { supabase } from '@/app/_lib/db/supabase';
+import { ensureCurrentUser } from '@/app/_lib/auth/funcs';
+import { createClient } from '@/app/_lib/db/supabase-client';
 
 import { UserSchema, UserValues } from '../_lib/types';
 
@@ -23,13 +24,16 @@ const Login = () => {
 
   const onSubmit = async (data: UserValues) => {
     setError('');
+    const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({ email: data.email, password: data.password });
     if (error) {
       setError('メールアドレスかパスワードが違います。');
       return;
     }
+    // ログイン直後にユーザープロファイル（m_user）を用意しておく
+    await ensureCurrentUser();
     router.refresh();
-    router.push('/');
+    router.push('/equipment-table-list');
   };
 
   return (

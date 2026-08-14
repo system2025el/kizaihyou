@@ -1,4 +1,7 @@
 import { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+
+import { fetchEquipmentTable } from '@/app/_lib/equipment-table/funcs';
 
 import EquipmentOrderDetail from './_ui/equipment-order-detail';
 
@@ -9,6 +12,12 @@ export const metadata: Metadata = {
 
 const Page = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
-  return <EquipmentOrderDetail id={id} />;
+  const kizaihyouId = Number(id);
+  if (!Number.isInteger(kizaihyouId)) notFound();
+
+  const detail = await fetchEquipmentTable(kizaihyouId);
+  if (!detail) notFound();
+
+  return <EquipmentOrderDetail detail={detail} />;
 };
 export default Page;
