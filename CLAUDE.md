@@ -17,15 +17,15 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
 
 ## kikikan(C:\EL)との関係（重要）
 
-このリポジトリは、姉妹プロジェクト **kikikan**（`C:\EL`、GitHub: 別リポジトリ、Vercel: 別プロジェクト）と**同一のSupabaseプロジェクト・同一の`public`スキーマ**を直接共有している。GitHubリポジトリもVercelプロジェクトも別だが、DBとAuthは1つ。
+このリポジトリは、姉妹プロジェクト **kikikan**（`C:\EL`、GitHub: 別リポジトリ、Vercel: 別プロジェクト）と機能的に連携するが、**Supabaseプロジェクトは完全に分離している（2026年8月〜）**。GitHub・Vercelはもちろん、DBとAuthもそれぞれ別。
 
-- **project_ref**: `jimqcvyaoddsxbcrsnfs`（ステージング/preview用。本番用project_refは別途あり、`.env.local`内にコメントアウトで記載）
-- **テーブル共有**: `m_bumon`等、kikikan側で定義済みのテーブルをこのリポジトリからも直接select/insert/update/deleteする。このリポジトリ独自のテーブルを追加する場合も同じ`public`スキーマに追加する。
-- **スキーマ変更の運用ルール**: 2つのリポジトリが同じテーブル定義に依存しているため、
-  - テーブル定義（カラム追加・型変更等）を変更したら、**もう一方のリポジトリの`app/_lib/db/types/types.ts`も再生成すること**を忘れない。
-  - どちらのリポジトリでマイグレーションを管理するか（migrationファイルの置き場所）は未確定。SQLでスキーマを変更する際は、必ずkikikan側（`y.yoneyama`）と事前にすり合わせる。
-- **Auth**: Supabase Authのユーザーテーブルも共有。ただしセッション（Cookie/localStorage）はドメインごとに独立するため、同じユーザーでもkikikanとkizaihyouでそれぞれログインが必要（SSOは組んでいない）。
-- **型生成**: `app/_lib/db/types/types.ts`はSupabase CLI（ローカル実行、`npx supabase gen types typescript --db-url "$DATABASE_URL" --schema public`）で生成する想定だが、このコマンドはDocker Desktop（またはPodman）が無いと失敗する（`LegacyContainerRuntimeNotFoundError`）。この環境にはDockerが無いため、代わりに`.mcp.json`のSupabase MCP（`generate_typescript_types`ツール）経由で生成している。生成後は`yarn fix:prettier`でプロジェクトのフォーマットに合わせること。スキーマ変更時は同じ手順で再生成する。
+- **経緯**: 当初はkikikanと同一Supabaseプロジェクト・同一`public`スキーマを直接共有する想定だったが、「Auth（ユーザー認証）をkizaihyou単独で管理したい」という理由から専用プロジェクトに切り替えた。旧共有プロジェクトの接続情報は`.env.local`にコメントアウトで残している（参考用、現在は未使用）。
+- **project_ref**: `lqxuybzllbgprzuuynfp`（kizaihyou専用、開発用に1つのみ作成。本番/ステージングを分ける運用にする場合は別途プロジェクトを作成しこの節を更新する）
+- **スキーマ**: kizaihyou専用の`public`スキーマ。現時点ではテーブル未作成（`app/_lib/db/types/types.ts`は空スキーマの型）。kikikanのテーブル定義とは無関係なので、スキーマ変更時にkikikan側とすり合わせる必要はない。
+- **Auth**: kikikanとは完全に別。同じ人間でもkikikanとkizaihyouでユーザーレコード（UUID）は別になる。将来、受注部担当者などのデータをkikikan側の担当者マスタと突き合わせる場合は、UUIDではなくメールアドレス等の別キーで名寄せする設計が必要。
+- **将来のクロスプロジェクトアクセス**: kikikan（本番・ステージングともVercel上）からこのプロジェクトのDBを直接参照・更新する構想がある。技術的には(a) kikikan側にこのプロジェクト用の`DATABASE_URL`・Supabase-jsクライアントをもう1組追加、(b) このプロジェクト側でkikikanから参照される想定のテーブルに適切なRLSポリシーを設定、で実現可能。ただし2つの別Postgresインスタンスにまたがる単一トランザクションは組めない点に注意（アプリ側で部分失敗のハンドリングを設計する）。
+- **IPv4アドオン**: このプロジェクトは新しい方式で作成されているため、Postgresへの直接接続（`app/_lib/db/postgres.ts`のpg Pool、ポート6543）はデフォルトでIPv6のみ。IPv4のみのネットワーク（このリポジトリの開発環境を含む）から接続するには、SupabaseダッシュボードでIPv4アドオン（有料、月$4程度）を有効化する必要がある（本プロジェクトでは有効化済み）。Supabase-js経由のアクセス（PostgREST、ポート443のHTTPS）はこの制約を受けず、アドオン無しでも常に接続可能。
+- **型生成**: `app/_lib/db/types/types.ts`はSupabase CLI（ローカル実行、`npx supabase gen types typescript --db-url "$DATABASE_URL" --schema public`）で生成する想定だが、このコマンドはDocker Desktop（またはPodman）が無いと失敗する（`LegacyContainerRuntimeNotFoundError`）。この環境にはDockerが無いため、代わりに`.mcp.json`のSupabase MCP（`generate_typescript_types`ツール、project_refは上記kizaihyou専用のもの）経由で生成している。生成後は`yarn fix:prettier`でプロジェクトのフォーマットに合わせること。スキーマ変更時は同じ手順で再生成する。
 
 ## アーキテクチャ（現状）
 
