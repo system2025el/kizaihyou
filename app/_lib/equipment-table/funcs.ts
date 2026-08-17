@@ -14,6 +14,7 @@ import {
 import { insertKizaihyouHis } from '../db/tables/t-kizaihyou-his';
 import { EquipmentTableHead, EquipmentTableStatus } from '../equipment-table-list/types';
 import { INITIAL_COLUMN_COUNT, INITIAL_ROW_COUNT } from './constants';
+import { buildKizaihyouExcel, buildKizaihyouExcelFileName } from './excel';
 import { EquipmentColumn, EquipmentRow, KizaiOption } from './types';
 
 export type EquipmentTableDetail = {
@@ -64,6 +65,7 @@ export const fetchEquipmentTable = async (kizaihyouId: number): Promise<Equipmen
       clientName: head.kokyaku_nam ?? '',
       shippedAt: head.shukko_dat ?? '',
       returnedAt: head.nyuko_dat ?? '',
+      memo: head.mem ?? '',
     },
     columns: (columns ?? []).map((column) => ({ id: String(column.column_id), label: column.column_nam })),
     rows: (rows ?? []).map((row) => ({
@@ -85,6 +87,7 @@ const toHeadInput = (head: EquipmentTableHead) => ({
   kokyakuNam: head.clientName,
   shukkoDat: head.shippedAt || null,
   nyukoDat: head.returnedAt || null,
+  mem: head.memo || null,
 });
 
 /** 新規作成した機材表に入れる初期の空の列・空行 */
@@ -152,6 +155,31 @@ export const saveEquipmentTable = async (
   };
 
   await saveKizaihyouContent(kizaihyouId, toHeadInput(head), content, user.userNam);
+};
+
+/**
+ * 画面の内容をExcel（.xlsm）にして返す関数。
+ * Server Actionsはバイナリをそのまま返せないのでbase64で受け渡す。
+ *
+ * @param kizaihyouCod 機材表ID（ファイル名に使う）
+ * @param head ヘッダの入力値
+ * @param columns 画面の列（表示順）
+ * @param rows 画面の行（表示順）
+ * @returns ファイル名とbase64のExcel
+ */
+export const exportEquipmentTableExcel = async (
+  kizaihyouCod: string,
+  head: EquipmentTableHead,
+  columns: EquipmentColumn[],
+  rows: EquipmentRow[]
+): Promise<{ fileName: string; base64: string }> => {
+  await requireCurrentUser();
+
+  const bytes = await buildKizaihyouExcel({ head, columns, rows });
+  return {
+    fileName: buildKizaihyouExcelFileName(kizaihyouCod, head.eventName),
+    base64: Buffer.from(bytes).toString('base64'),
+  };
 };
 
 /**

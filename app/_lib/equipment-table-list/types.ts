@@ -52,4 +52,6 @@ export type EquipmentTableHead = {
   shippedAt: string;
   /** YYYY-MM-DD */
   returnedAt: string;
+  /** 機材表全体の備考（行ごとの備考とは別物） */
+  memo: string;
 };

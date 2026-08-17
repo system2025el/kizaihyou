@@ -76,6 +76,7 @@ const EquipmentTableList = () => {
         clientName: '',
         shippedAt: '',
         returnedAt: '',
+        memo: '',
       });
       router.push(`/equipment-table/${id}`);
     } catch {

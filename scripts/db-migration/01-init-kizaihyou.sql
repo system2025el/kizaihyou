@@ -219,3 +219,10 @@ create policy p_t_kizaihyou_qty_all on public.t_kizaihyou_qty
   for all to authenticated using (true) with check (true);
 create policy p_t_kizaihyou_his_all on public.t_kizaihyou_his
   for all to authenticated using (true) with check (true);
+
+-- ----------------------------------------------------------------------------
+-- 追加: 機材表全体の備考（Excel出力のC4に入る）
+--   行ごとの備考は t_kizaihyou_row.mem（Excelの D 列）で別物。
+-- ----------------------------------------------------------------------------
+alter table public.t_kizaihyou add column mem text;
+comment on column public.t_kizaihyou.mem is '機材表全体の備考（行ごとの備考は t_kizaihyou_row.mem）';

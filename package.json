@@ -27,6 +27,7 @@
     "@mui/material-nextjs": "^6.4.3",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "2.90.1",
+    "fflate": "^0.8.3",
     "next": "15.5.10",
     "pg": "^8.16.3",
     "react": "19.0.4",

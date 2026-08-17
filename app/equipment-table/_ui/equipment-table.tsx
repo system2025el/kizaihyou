@@ -13,6 +13,7 @@ import { CSS } from '@dnd-kit/utilities';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DownloadIcon from '@mui/icons-material/Download';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import SaveIcon from '@mui/icons-material/Save';
 import SendIcon from '@mui/icons-material/Send';
@@ -41,7 +42,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
-import { EquipmentTableDetail, saveEquipmentTable } from '@/app/_lib/equipment-table/funcs';
+import { EquipmentTableDetail, exportEquipmentTableExcel, saveEquipmentTable } from '@/app/_lib/equipment-table/funcs';
 import { EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
 import { requestEquipmentTable } from '@/app/_lib/equipment-table-list/funcs';
 import { EquipmentTableHead, EquipmentTableStatus } from '@/app/_lib/equipment-table-list/types';
@@ -352,6 +353,27 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
     }
   };
 
+  const handleExport = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const { fileName, base64 } = await exportEquipmentTableExcel(detail.cod, head, columns, rows);
+      // base64で受け取ったバイナリをBlobに戻してダウンロードさせる
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.ms-excel.sheet.macroEnabled.12' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage('Excelを出力しました');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Excelの出力に失敗しました。');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleRequest = async () => {
     setBusy(true);
     setError('');
@@ -389,6 +411,9 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
             </Button>
             <Button startIcon={<AddIcon />} onClick={addColumn}>
               列を追加
+            </Button>
+            <Button startIcon={<DownloadIcon />} onClick={handleExport} disabled={busy}>
+              Excel出力
             </Button>
             <Button startIcon={<SaveIcon />} variant="outlined" onClick={handleSave} disabled={busy}>
               保存
@@ -447,6 +472,13 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
             size="small"
             type="date"
             slotProps={{ inputLabel: { shrink: true } }}
+          />
+          <TextField
+            label="備考"
+            value={head.memo}
+            onChange={(e) => setHead({ ...head, memo: e.target.value })}
+            size="small"
+            sx={{ minWidth: 280, flexGrow: 1 }}
           />
         </Box>
 

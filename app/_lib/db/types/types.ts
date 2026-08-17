@@ -73,6 +73,7 @@ export type Database = {
           kizaihyou_id: number;
           koen_nam: string;
           kokyaku_nam: string | null;
+          mem: string | null;
           nyuko_dat: string | null;
           shukko_dat: string | null;
           sts_cod: number;
@@ -91,6 +92,7 @@ export type Database = {
           kizaihyou_id?: never;
           koen_nam: string;
           kokyaku_nam?: string | null;
+          mem?: string | null;
           nyuko_dat?: string | null;
           shukko_dat?: string | null;
           sts_cod?: number;
@@ -109,6 +111,7 @@ export type Database = {
           kizaihyou_id?: never;
           koen_nam?: string;
           kokyaku_nam?: string | null;
+          mem?: string | null;
           nyuko_dat?: string | null;
           shukko_dat?: string | null;
           sts_cod?: number;

@@ -7,7 +7,7 @@ import { createClient } from '../supabase-server';
 /** 一覧・詳細で共通して取得するヘッダの列（ステータス名も一緒に引く） */
 const HEAD_COLUMNS = `
   kizaihyou_id, kizaihyou_cod, koen_nam, basho_nam, kokyaku_nam,
-  shukko_dat, nyuko_dat, sts_cod, tanto_nam, add_dat, upd_dat,
+  shukko_dat, nyuko_dat, sts_cod, tanto_nam, mem, add_dat, upd_dat,
   m_kizaihyou_sts ( sts_nam, chip_color )
 `;
 
@@ -108,6 +108,7 @@ export type KizaihyouHeadInput = {
   kokyakuNam: string;
   shukkoDat: string | null;
   nyukoDat: string | null;
+  mem: string | null;
 };
 
 /**
@@ -135,6 +136,7 @@ export const insertKizaihyou = async (
         kokyaku_nam: head.kokyakuNam,
         shukko_dat: head.shukkoDat,
         nyuko_dat: head.nyukoDat,
+        mem: head.mem,
         tanto_nam: tantoNam,
         tanto_user_id: tantoUserId,
         copy_from_id: copyFromId,
@@ -186,8 +188,8 @@ export const copyKizaihyou = async (sourceId: number, tantoNam: string, tantoUse
 
     const head = await connection.query<{ kizaihyou_id: string; kizaihyou_cod: string }>(
       `INSERT INTO ${SCHEMA}.t_kizaihyou
-              (koen_nam, basho_nam, kokyaku_nam, tanto_nam, tanto_user_id, copy_from_id, add_user, upd_user)
-       SELECT koen_nam, basho_nam, kokyaku_nam, $2, $3, kizaihyou_id, $2, $2
+              (koen_nam, basho_nam, kokyaku_nam, mem, tanto_nam, tanto_user_id, copy_from_id, add_user, upd_user)
+       SELECT koen_nam, basho_nam, kokyaku_nam, mem, $2, $3, kizaihyou_id, $2, $2
          FROM ${SCHEMA}.t_kizaihyou
         WHERE kizaihyou_id = $1
     RETURNING kizaihyou_id, kizaihyou_cod`,
@@ -273,9 +275,9 @@ export const saveKizaihyouContent = async (
     await connection.query(
       `UPDATE ${SCHEMA}.t_kizaihyou
           SET koen_nam = $2, basho_nam = $3, kokyaku_nam = $4,
-              shukko_dat = $5, nyuko_dat = $6, upd_user = $7
+              shukko_dat = $5, nyuko_dat = $6, mem = $7, upd_user = $8
         WHERE kizaihyou_id = $1`,
-      [kizaihyouId, head.koenNam, head.bashoNam, head.kokyakuNam, head.shukkoDat, head.nyukoDat, updUser]
+      [kizaihyouId, head.koenNam, head.bashoNam, head.kokyakuNam, head.shukkoDat, head.nyukoDat, head.mem, updUser]
     );
 
     await connection.query(`DELETE FROM ${SCHEMA}.t_kizaihyou_column WHERE kizaihyou_id = $1`, [kizaihyouId]);

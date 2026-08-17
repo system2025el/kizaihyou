@@ -47,19 +47,31 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
   - DBのカラムはsnake_case、アプリコードはcamelCase。変換の自動レイヤーは無く、クエリごとに手動マッピングする。
 - **API RouteではなくServer Actions**: ビジネスロジックのファイルは`'use server'`を付与し、クライアントコンポーネントから直接Server Actionsとして呼び出す方針（kikikanに合わせる）。
 
+### Excel出力
+
+機材表画面の「Excel出力」は、罫線・色・列幅・印刷設定・数式・**マクロ**を作り直さずに済むよう、**空の雛形`resources/kizaihyou-template.xlsm`に値だけを差し込む**方式（実装は`app/_lib/equipment-table/excel.ts`）。`.xlsm`はZIPなので`fflate`で展開し、`xl/worksheets/sheet1.xml`のセルだけ書き換えて詰め直す。`vbaProject.bin`を含む他のパーツはバイト単位でそのまま残るため、マクロが生き残る（exceljs等の一般的なライブラリは`.xlsm`を書けないので使っていない）。
+
+- **雛形の作り直し**: `node scripts/build-excel-template.mjs <実運用の機材表.xlsm>`。実ファイルから値だけを消して雛形を作る。レイアウトを変えたいときはExcel上で雛形を直接編集するか、新しい機材表を元にこのスクリプトを流し直す。
+- **雛形のセル配置**: `C1`=公演名 / `C2`=顧客名 / `E2`=場所 / `G3`=出庫日 / `G4`=返却日 / `C4`=機材表全体の備考（ラベルは`B4`）。5行目`I`〜`AJ`=ポジション見出し。7行目以降が機材1行で`B`=種類 / `C`=名称 / `D`=行ごとの備考 / `H`=SPARE / `I`〜`AJ`=数量。`F`(TOTAL)・`G`(ACTIVE)は雛形側の数式が計算するので値は書かない。
+- **上限**: ポジションは28列（`I`〜`AJ`）、機材は405行（7〜411行目）。雛形に書式が用意されている範囲を超えるため、超えたら明示的にエラーにしている。
+- 日付はExcelのシリアル値（1899-12-30起点）で書く。書式は雛形のセル側に付いている。
+- 文字列は`t="inlineStr"`で書き込み、`sharedStrings.xml`は触らない（件数の整合を取らずに済むため）。
+- Server Actionsはバイナリを返せないのでbase64で受け渡し、クライアントでBlobに戻してダウンロードさせる。
+- `resources/`はimportしていないのでNextのファイル追跡に乗らない。`next.config.ts`の`outputFileTracingIncludes`で明示的にビルド成果物へ含めている。
+
 ### テーブル構成
 
 DDLは`scripts/db-migration/01-init-kizaihyou.sql`（適用済み）。命名・監査列（`del_flg`/`add_dat`/`add_user`/`upd_dat`/`upd_user`/`dsp_ord_num`）はkikikanの規約に合わせている。
 
-| テーブル             | 役割                                                                                                                          |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `m_user`             | kizaihyou専用Authのユーザープロファイル（`auth.users`にFK）。`email`がkikikan側担当者との名寄せキー                           |
-| `m_kizaihyou_sts`    | 状態ステータスマスタ（作成中/申請中/差戻し/承認済＋MUIのChip color）                                                          |
-| `t_kizaihyou`        | 機材表ヘッダ。`kizaihyou_cod`（`KZ-0001`形式）はシーケンスで自動採番                                                          |
-| `t_kizaihyou_column` | 機材表の列（会場のポジション）。並び替え中に値が重複しうるため`dsp_ord_num`にunique制約は張らない                             |
-| `t_kizaihyou_row`    | 機材表の行（機材1点）。`kizai_id`＝kikikanの`m_kizai.kizai_id`（FK無し、手入力名はnull）、`kizai_nam`は表示用スナップショット |
-| `t_kizaihyou_qty`    | 行×列の数量セル。空セルはレコードを作らない（疎行列）。`TOTAL = ACTIVE合計 + spare_qty`                                       |
-| `t_kizaihyou_his`    | 操作履歴。`mem`に承認・差戻しコメント、`user_nam`は操作時点の氏名スナップショット                                             |
+| テーブル             | 役割                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `m_user`             | kizaihyou専用Authのユーザープロファイル（`auth.users`にFK）。`email`がkikikan側担当者との名寄せキー                                                                |
+| `m_kizaihyou_sts`    | 状態ステータスマスタ（作成中/申請中/差戻し/承認済＋MUIのChip color）                                                                                               |
+| `t_kizaihyou`        | 機材表ヘッダ。`kizaihyou_cod`（`KZ-0001`形式）はシーケンスで自動採番。`mem`＝機材表全体の備考（Excelの`C4`）                                                       |
+| `t_kizaihyou_column` | 機材表の列（会場のポジション）。並び替え中に値が重複しうるため`dsp_ord_num`にunique制約は張らない                                                                  |
+| `t_kizaihyou_row`    | 機材表の行（機材1点）。`kizai_id`＝kikikanの`m_kizai.kizai_id`（FK無し、手入力名はnull）、`kizai_nam`は表示用スナップショット。`mem`＝行ごとの備考（Excelの`D`列） |
+| `t_kizaihyou_qty`    | 行×列の数量セル。空セルはレコードを作らない（疎行列）。`TOTAL = ACTIVE合計 + spare_qty`                                                                            |
+| `t_kizaihyou_his`    | 操作履歴。`mem`に承認・差戻しコメント、`user_nam`は操作時点の氏名スナップショット                                                                                  |
 
 - 公演名・場所・顧客名・出庫入庫日はkikikanの受注（`t_juchu_head`）とは切り離し、kizaihyou側で自前保持している。受注との紐付けは未実装。
 - RLSは全テーブルで有効。現状は認証済みユーザーに一律許可（権限の細分化は未導入）。kikikanから参照させる場合は別途ポリシーが必要。
