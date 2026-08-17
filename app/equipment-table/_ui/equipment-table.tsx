@@ -11,6 +11,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import AddIcon from '@mui/icons-material/Add';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import SaveIcon from '@mui/icons-material/Save';
@@ -337,6 +338,9 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
       <Box p={2}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
           <Box display="flex" alignItems="center" gap={1}>
+            <IconButton onClick={() => router.push('/equipment-table-list')} title="機材表履歴一覧に戻る">
+              <ArrowBackIcon />
+            </IconButton>
             <Typography variant="h5">機材表 {detail.cod}</Typography>
             <Chip label={detail.status} size="small" />
           </Box>
