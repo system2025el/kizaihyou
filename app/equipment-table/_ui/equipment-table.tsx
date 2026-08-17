@@ -23,6 +23,10 @@ import {
   Button,
   Chip,
   createFilterOptions,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Snackbar,
   Table,
@@ -35,7 +39,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { EquipmentTableDetail, saveEquipmentTable } from '@/app/_lib/equipment-table/funcs';
 import { EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
@@ -81,6 +85,25 @@ const filterKizaiOptions = createFilterOptions<KizaiOption>({
 
 /** 申請できるステータス（承認待ち・承認済みからは再申請しない） */
 const REQUESTABLE_STATUSES: EquipmentTableStatus[] = ['作成中', '差戻し'];
+
+/**
+ * 未保存の変更があるかを判定するためのスナップショット。
+ * 行・列のidは保存のたびに採番し直されるため、比較対象には含めない。
+ */
+const toSnapshot = (head: EquipmentTableHead, columns: EquipmentColumn[], rows: EquipmentRow[]) =>
+  JSON.stringify({
+    head,
+    columns: columns.map((column) => column.label),
+    rows: rows.map((row) => ({
+      kind: row.kind,
+      kizaiId: row.kizaiId,
+      name: row.name,
+      remark: row.remark,
+      spare: row.spare,
+      // 列の並び替えに追随できるよう、列idではなく表示順で数量を並べる
+      qty: columns.map((column) => row.qty[column.id] ?? ''),
+    })),
+  });
 
 type ColumnHeaderCellProps = {
   column: EquipmentColumn;
@@ -246,12 +269,18 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [confirmBack, setConfirmBack] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  // 未保存の変更があるかは、最後に保存した内容とのスナップショット比較で判定する
+  const [savedSnapshot, setSavedSnapshot] = useState(() => toSnapshot(detail.head, detail.columns, detail.rows));
+  const currentSnapshot = useMemo(() => toSnapshot(head, columns, rows), [head, columns, rows]);
+  const isDirty = currentSnapshot !== savedSnapshot;
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
 
-  const addColumn = () => setColumns((prev) => [...prev, createColumn(`列${prev.length + 1}`)]);
+  const addColumn = () => setColumns((prev) => [...prev, createColumn('')]);
   const removeColumn = (id: string) => {
     setColumns((prev) => prev.filter((column) => column.id !== id));
     setRows((prev) =>
@@ -295,9 +324,19 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
   };
 
   const save = async () => {
+    const snapshot = toSnapshot(head, columns, rows);
     await saveEquipmentTable(detail.id, head, columns, rows);
+    setSavedSnapshot(snapshot);
     // 保存で列・行のidが採番し直されるため、サーバーから読み直す
     router.refresh();
+  };
+
+  const handleBack = () => {
+    if (isDirty) {
+      setConfirmBack(true);
+      return;
+    }
+    router.push('/equipment-table-list');
   };
 
   const handleSave = async () => {
@@ -338,7 +377,7 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
       <Box p={2}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
           <Box display="flex" alignItems="center" gap={1}>
-            <IconButton onClick={() => router.push('/equipment-table-list')} title="機材表履歴一覧に戻る">
+            <IconButton onClick={handleBack} title="機材表履歴一覧に戻る">
               <ArrowBackIcon />
             </IconButton>
             <Typography variant="h5">機材表 {detail.cod}</Typography>
@@ -454,6 +493,19 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
             </TableBody>
           </Table>
         </TableContainer>
+
+        <Dialog open={confirmBack} onClose={() => setConfirmBack(false)}>
+          <DialogTitle fontSize="medium">保存していない変更があります</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">変更を破棄して機材表履歴一覧に戻りますか？</Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" color="error" onClick={() => router.push('/equipment-table-list')}>
+              破棄して戻る
+            </Button>
+            <Button onClick={() => setConfirmBack(false)}>キャンセル</Button>
+          </DialogActions>
+        </Dialog>
 
         <Snackbar
           open={message !== ''}

@@ -13,7 +13,7 @@ import {
 } from '../db/tables/t-kizaihyou';
 import { insertKizaihyouHis } from '../db/tables/t-kizaihyou-his';
 import { EquipmentTableHead, EquipmentTableStatus } from '../equipment-table-list/types';
-import { DEFAULT_COLUMN_LABELS, INITIAL_ROW_COUNT } from './constants';
+import { INITIAL_COLUMN_COUNT, INITIAL_ROW_COUNT } from './constants';
 import { EquipmentColumn, EquipmentRow, KizaiOption } from './types';
 
 export type EquipmentTableDetail = {
@@ -87,9 +87,9 @@ const toHeadInput = (head: EquipmentTableHead) => ({
   nyukoDat: head.returnedAt || null,
 });
 
-/** 新規作成した機材表に入れる初期の列・空行 */
+/** 新規作成した機材表に入れる初期の空の列・空行 */
 const initialContent = (): KizaihyouContentInput => ({
-  columns: DEFAULT_COLUMN_LABELS.map((label) => ({ columnNam: label })),
+  columns: Array.from({ length: INITIAL_COLUMN_COUNT }, () => ({ columnNam: '' })),
   rows: Array.from({ length: INITIAL_ROW_COUNT }, () => ({
     kizaiKind: '',
     kizaiId: null,
