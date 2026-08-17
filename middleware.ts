@@ -35,6 +35,13 @@ export const middleware = async (request: NextRequest) => {
     (path) => request.nextUrl.pathname === path || request.nextUrl.pathname.startsWith(`${path}/`)
   );
 
+  // Server Actionのリクエストはリダイレクトしない。
+  // リダイレクトするとクライアントが応答を解釈できず
+  // 「An unexpected response was received from the server.」になる
+  // （ログイン直後に/loginからensureCurrentUser()を呼ぶケースで発生した）。
+  // 未ログイン時のアクセス制御は各Server ActionのrequireCurrentUser()が担う。
+  if (request.headers.has('next-action')) return response;
+
   // リダイレクト時も、setAllでリフレッシュされたCookieを引き継ぐ
   const redirectWithCookies = (url: string | URL) => {
     const redirectResponse = NextResponse.redirect(new URL(url, request.url));
