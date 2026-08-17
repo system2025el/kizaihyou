@@ -88,6 +88,19 @@ if (new RegExp(`<c r="B4"[^>]*?(\\/>|>[\\s\\S]*?<\\/c>)`).test(xml)) {
 }
 files['xl/worksheets/sheet1.xml'] = enc.encode(xml);
 
+// calcChain.xml（数式の計算順キャッシュ）は消したセルを参照したまま残ると
+// 「削除されたレコード: /xl/calcChain.xml パーツ内の数式」の修復ダイアログが出る。
+// Excelが開くときに作り直すパーツなので取り除く。
+if (files['xl/calcChain.xml']) {
+  delete files['xl/calcChain.xml'];
+  files['[Content_Types].xml'] = enc.encode(
+    dec.decode(files['[Content_Types].xml']).replace(/<Override PartName="\/xl\/calcChain\.xml"[^>]*\/>/, '')
+  );
+  files['xl/_rels/workbook.xml.rels'] = enc.encode(
+    dec.decode(files['xl/_rels/workbook.xml.rels']).replace(/<Relationship[^>]*Target="calcChain\.xml"[^>]*\/>/, '')
+  );
+}
+
 // キャッシュ値を消したので、開いたときに再計算させる
 const wb = dec.decode(files['xl/workbook.xml']);
 files['xl/workbook.xml'] = enc.encode(

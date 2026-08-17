@@ -184,6 +184,27 @@ const trimSheet = (xml: string, lastRow: number, lastCol: number) => {
   return trimmed.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${lastColLetters}${lastRow}"/>`);
 };
 
+/**
+ * calcChain.xml（数式の計算順キャッシュ）を取り除く。
+ *
+ * 削除したセルを参照したまま残ると、Excelが開くときに
+ * 「削除されたレコード: /xl/calcChain.xml パーツ内の数式」と修復を促してしまう。
+ * Excelが自動で作り直すパーツなので、消しておくのが確実。
+ */
+const dropCalcChain = (files: Record<string, Uint8Array>) => {
+  if (!files['xl/calcChain.xml']) return;
+  delete files['xl/calcChain.xml'];
+
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  files['[Content_Types].xml'] = encoder.encode(
+    decoder.decode(files['[Content_Types].xml']).replace(/<Override PartName="\/xl\/calcChain\.xml"[^>]*\/>/, '')
+  );
+  files['xl/_rels/workbook.xml.rels'] = encoder.encode(
+    decoder.decode(files['xl/_rels/workbook.xml.rels']).replace(/<Relationship[^>]*Target="calcChain\.xml"[^>]*\/>/, '')
+  );
+};
+
 export type ExcelExportInput = {
   head: EquipmentTableHead;
   columns: EquipmentColumn[];
@@ -244,6 +265,7 @@ export const buildKizaihyouExcel = async (input: ExcelExportInput): Promise<Uint
   const lastCol = colIndex('H') + columns.length;
   xml = trimSheet(xml, lastRow, lastCol);
   files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(xml);
+  dropCalcChain(files);
 
   // 印刷範囲も切り詰めた範囲に合わせる
   const decoder = new TextDecoder();
