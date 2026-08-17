@@ -92,6 +92,98 @@ const writeCell = (xml: string, ref: string, value: CellValue | null) => {
 
 const textCell = (value: string): CellValue | null => (value.trim() ? { text: value } : null);
 
+const colIndex = (letters: string) => letters.split('').reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0);
+const colLetters = (index: number) => {
+  let n = index;
+  let letters = '';
+  while (n > 0) {
+    letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+};
+
+/** 「A1」「A1:B2」形式の範囲を、残す行・列に収まるよう切り詰める。範囲外ならnull */
+const clipRange = (range: string, lastRow: number, lastCol: number) => {
+  const cells = range.split(':');
+  const parsed = cells.map((cell) => cell.match(/^\$?([A-Z]+)\$?(\d+)$/));
+  if (parsed.some((p) => !p)) return range; // 行全体・列全体の指定などはそのまま
+  const [start, end = start] = parsed as RegExpMatchArray[];
+  if (colIndex(start[1]) > lastCol || Number(start[2]) > lastRow) return null;
+  const endCol = Math.min(colIndex(end[1]), lastCol);
+  const endRow = Math.min(Number(end[2]), lastRow);
+  const startRef = `${start[1]}${start[2]}`;
+  const endRef = `${colLetters(endCol)}${endRow}`;
+  return startRef === endRef ? (cells.length === 1 ? startRef : null) : `${startRef}:${endRef}`;
+};
+
+/**
+ * 雛形は空の行・列にも罫線が引いてあるため、実データの範囲だけを残して切り詰める。
+ * 併せて結合セル・条件付き書式・改ページ・印刷範囲も同じ範囲に合わせる。
+ */
+const trimSheet = (xml: string, lastRow: number, lastCol: number) => {
+  const lastColLetters = colLetters(lastCol);
+
+  // 1行目右端の作成日（TODAY()）は切り詰めで消えるため、退避して最終列に置き直す
+  const dateCell = ['AJ1', 'AI1']
+    .map((ref) => xml.match(new RegExp(`<c r="${ref}"[^>]*?(?:/>|>[\\s\\S]*?</c>)`))?.[0])
+    .find((cell) => cell?.includes('TODAY()'));
+  const dateCellRef = dateCell?.match(/r="([A-Z]+)\d+"/)?.[1];
+  const moveDate = dateCell && dateCellRef && colIndex(dateCellRef) > lastCol;
+
+  // 行の切り詰めと、各行の列の切り詰め
+  let trimmed = xml.replace(/<row\b([^>]*)>([\s\S]*?)<\/row>/g, (whole, attrs: string, body: string) => {
+    if (Number(attrs.match(/r="(\d+)"/)![1]) > lastRow) return '';
+    const keptCells = body.replace(/<c\b([^>]*?)(?:\/>|>[\s\S]*?<\/c>)/g, (cell, cellAttrs: string) => {
+      const col = cellAttrs.match(/r="([A-Z]+)\d+"/)?.[1];
+      return col && colIndex(col) > lastCol ? '' : cell;
+    });
+    return `<row${attrs.replace(/\s*spans="[^"]*"/, '')}>${keptCells}</row>`;
+  });
+
+  if (moveDate) {
+    const movedRef = `${lastColLetters}1`;
+    const moved = dateCell.replace(/r="[A-Z]+\d+"/, `r="${movedRef}"`);
+    const existing = new RegExp(`<c r="${movedRef}"[^>]*?(?:/>|>[\\s\\S]*?</c>)`);
+    trimmed = existing.test(trimmed)
+      ? trimmed.replace(existing, moved)
+      : trimmed.replace(/(<row[^>]*r="1"[^>]*>[\s\S]*?)(<\/row>)/, `$1${moved}$2`);
+  }
+
+  // 結合セル
+  trimmed = trimmed.replace(/<mergeCells[^>]*>([\s\S]*?)<\/mergeCells>/, (whole, body: string) => {
+    const kept = [...body.matchAll(/<mergeCell ref="([^"]+)"\s*\/>/g)]
+      .map((m) => clipRange(m[1], lastRow, lastCol))
+      .filter((ref): ref is string => ref !== null && ref.includes(':'));
+    if (!kept.length) return '';
+    return `<mergeCells count="${kept.length}">${kept.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>`;
+  });
+
+  // 条件付き書式（選択行・列のハイライトとTOTALのマイナス表示）
+  trimmed = trimmed.replace(
+    /<conditionalFormatting([^>]*)>([\s\S]*?)<\/conditionalFormatting>/g,
+    (whole, attrs: string, body: string) => {
+      const sqref = attrs.match(/sqref="([^"]+)"/)?.[1];
+      if (!sqref) return whole;
+      const kept = sqref
+        .split(/\s+/)
+        .map((range) => clipRange(range, lastRow, lastCol))
+        .filter((range): range is string => range !== null);
+      if (!kept.length) return '';
+      return `<conditionalFormatting${attrs.replace(/sqref="[^"]+"/, `sqref="${kept.join(' ')}"`)}>${body}</conditionalFormatting>`;
+    }
+  );
+
+  // 改ページ（データより後ろのものは不要）
+  trimmed = trimmed.replace(/<rowBreaks[^>]*>([\s\S]*?)<\/rowBreaks>/, (whole, body: string) => {
+    const kept = [...body.matchAll(/<brk[^>]*id="(\d+)"[^>]*\/>/g)].filter((m) => Number(m[1]) < lastRow);
+    if (!kept.length) return '';
+    return `<rowBreaks count="${kept.length}" manualBreakCount="${kept.length}">${kept.map((m) => m[0]).join('')}</rowBreaks>`;
+  });
+
+  return trimmed.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${lastColLetters}${lastRow}"/>`);
+};
+
 export type ExcelExportInput = {
   head: EquipmentTableHead;
   columns: EquipmentColumn[];
@@ -147,7 +239,25 @@ export const buildKizaihyouExcel = async (input: ExcelExportInput): Promise<Uint
     });
   });
 
+  // 雛形は空の行・列にも罫線が引いてあるので、実データの範囲だけに切り詰める
+  const lastRow = rows.length ? FIRST_DATA_ROW + rows.length - 1 : FIRST_DATA_ROW - 1;
+  const lastCol = colIndex('H') + columns.length;
+  xml = trimSheet(xml, lastRow, lastCol);
   files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(xml);
+
+  // 印刷範囲も切り詰めた範囲に合わせる
+  const decoder = new TextDecoder();
+  const workbook = decoder.decode(files['xl/workbook.xml']);
+  files['xl/workbook.xml'] = new TextEncoder().encode(
+    workbook.replace(
+      /(<definedName name="_xlnm.Print_Area"[^>]*>)([^<]*)(<\/definedName>)/,
+      (whole, open: string, value: string, close: string) => {
+        const sheetName = value.split('!')[0];
+        return `${open}${sheetName}!$B$1:$${colLetters(lastCol)}$${lastRow}${close}`;
+      }
+    )
+  );
+
   return zipSync(files, { level: 6 });
 };
 
