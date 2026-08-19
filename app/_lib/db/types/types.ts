@@ -34,7 +34,9 @@ export type Database = {
           add_dat: string;
           add_user: string | null;
           del_flg: number;
+          dsp_ord_num: number | null;
           email: string;
+          permission: number;
           upd_dat: string;
           upd_user: string | null;
           user_id: string;
@@ -44,7 +46,9 @@ export type Database = {
           add_dat?: string;
           add_user?: string | null;
           del_flg?: number;
+          dsp_ord_num?: number | null;
           email: string;
+          permission?: number;
           upd_dat?: string;
           upd_user?: string | null;
           user_id: string;
@@ -54,7 +58,9 @@ export type Database = {
           add_dat?: string;
           add_user?: string | null;
           del_flg?: number;
+          dsp_ord_num?: number | null;
           email?: string;
+          permission?: number;
           upd_dat?: string;
           upd_user?: string | null;
           user_id?: string;
@@ -75,10 +81,12 @@ export type Database = {
           kokyaku_nam: string | null;
           mem: string | null;
           nyuko_dat: string | null;
+          shinsei_his_id: number | null;
+          shinsei_nam: string;
+          shinsei_user_id: string | null;
           shukko_dat: string | null;
           sts_cod: number;
           tanto_nam: string;
-          tanto_user_id: string | null;
           upd_dat: string;
           upd_user: string | null;
         };
@@ -94,10 +102,12 @@ export type Database = {
           kokyaku_nam?: string | null;
           mem?: string | null;
           nyuko_dat?: string | null;
+          shinsei_his_id?: number | null;
+          shinsei_nam?: string;
+          shinsei_user_id?: string | null;
           shukko_dat?: string | null;
           sts_cod?: number;
           tanto_nam?: string;
-          tanto_user_id?: string | null;
           upd_dat?: string;
           upd_user?: string | null;
         };
@@ -113,10 +123,12 @@ export type Database = {
           kokyaku_nam?: string | null;
           mem?: string | null;
           nyuko_dat?: string | null;
+          shinsei_his_id?: number | null;
+          shinsei_nam?: string;
+          shinsei_user_id?: string | null;
           shukko_dat?: string | null;
           sts_cod?: number;
           tanto_nam?: string;
-          tanto_user_id?: string | null;
           upd_dat?: string;
           upd_user?: string | null;
         };
@@ -136,8 +148,15 @@ export type Database = {
             referencedColumns: ['sts_cod'];
           },
           {
-            foreignKeyName: 't_kizaihyou_tanto_user_id_fkey';
-            columns: ['tanto_user_id'];
+            foreignKeyName: 't_kizaihyou_shinsei_his_id_fkey';
+            columns: ['shinsei_his_id'];
+            isOneToOne: false;
+            referencedRelation: 't_kizaihyou_his';
+            referencedColumns: ['his_id'];
+          },
+          {
+            foreignKeyName: 't_kizaihyou_shinsei_user_id_fkey';
+            columns: ['shinsei_user_id'];
             isOneToOne: false;
             referencedRelation: 'm_user';
             referencedColumns: ['user_id'];
@@ -180,6 +199,8 @@ export type Database = {
           his_id: number;
           kizaihyou_id: number;
           mem: string | null;
+          snapshot: Json | null;
+          snapshot_flg: number | null;
           user_id: string | null;
           user_nam: string;
         };
@@ -189,6 +210,8 @@ export type Database = {
           his_id?: never;
           kizaihyou_id: number;
           mem?: string | null;
+          snapshot?: Json | null;
+          snapshot_flg?: number | null;
           user_id?: string | null;
           user_nam?: string;
         };
@@ -198,6 +221,8 @@ export type Database = {
           his_id?: never;
           kizaihyou_id?: number;
           mem?: string | null;
+          snapshot?: Json | null;
+          snapshot_flg?: number | null;
           user_id?: string | null;
           user_nam?: string;
         };
@@ -248,6 +273,42 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: 't_kizaihyou_row';
             referencedColumns: ['row_id'];
+          },
+        ];
+      };
+      t_kizaihyou_tanto: {
+        Row: {
+          dsp_ord_num: number;
+          kizaihyou_id: number;
+          user_id: string;
+          user_nam: string;
+        };
+        Insert: {
+          dsp_ord_num?: number;
+          kizaihyou_id: number;
+          user_id: string;
+          user_nam?: string;
+        };
+        Update: {
+          dsp_ord_num?: number;
+          kizaihyou_id?: number;
+          user_id?: string;
+          user_nam?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 't_kizaihyou_tanto_kizaihyou_id_fkey';
+            columns: ['kizaihyou_id'];
+            isOneToOne: false;
+            referencedRelation: 't_kizaihyou';
+            referencedColumns: ['kizaihyou_id'];
+          },
+          {
+            foreignKeyName: 't_kizaihyou_tanto_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'm_user';
+            referencedColumns: ['user_id'];
           },
         ];
       };

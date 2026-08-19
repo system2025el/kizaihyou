@@ -1,7 +1,13 @@
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import { fetchEquipmentTable, fetchKizaiOptions } from '@/app/_lib/equipment-table/funcs';
+import {
+  fetchEquipmentTable,
+  fetchEquipmentTableHistory,
+  fetchKizaiKindOptions,
+  fetchKizaiOptions,
+} from '@/app/_lib/equipment-table/funcs';
+import { fetchJuchuTantoOptions } from '@/app/_lib/equipment-table-list/funcs';
 
 import EquipmentTable from '../_ui/equipment-table';
 
@@ -15,9 +21,23 @@ const Page = async ({ params }: { params: Promise<{ id: string }> }) => {
   const kizaihyouId = Number(id);
   if (!Number.isInteger(kizaihyouId)) notFound();
 
-  const [detail, kizaiOptions] = await Promise.all([fetchEquipmentTable(kizaihyouId), fetchKizaiOptions()]);
+  const [detail, kizaiOptions, kizaiKindOptions, juchuTantoOptions, history] = await Promise.all([
+    fetchEquipmentTable(kizaihyouId),
+    fetchKizaiOptions(),
+    fetchKizaiKindOptions(),
+    fetchJuchuTantoOptions(),
+    fetchEquipmentTableHistory(kizaihyouId),
+  ]);
   if (!detail) notFound();
 
-  return <EquipmentTable detail={detail} kizaiOptions={kizaiOptions} />;
+  return (
+    <EquipmentTable
+      detail={detail}
+      kizaiOptions={kizaiOptions}
+      kizaiKindOptions={kizaiKindOptions}
+      juchuTantoOptions={juchuTantoOptions}
+      history={history}
+    />
+  );
 };
 export default Page;

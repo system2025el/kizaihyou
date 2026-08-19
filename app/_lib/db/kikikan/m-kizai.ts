@@ -13,7 +13,7 @@ export const selectKikikanKizaiList = async () => {
   try {
     return await supabaseKikikan
       .from('m_kizai')
-      .select('kizai_id, kizai_nam')
+      .select('kizai_id, kizai_nam, bumon_id')
       .eq('del_flg', SELECTABLE.del_flg)
       .eq('dsp_flg', SELECTABLE.dsp_flg)
       .order('dsp_ord_num', { ascending: true, nullsFirst: false })

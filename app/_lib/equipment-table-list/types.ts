@@ -1,6 +1,6 @@
 import { EquipmentColumn, EquipmentRow } from '@/app/_lib/equipment-table/types';
 
-export type EquipmentTableStatus = '作成中' | '申請中' | '差戻し' | '承認済';
+export type EquipmentTableStatus = '作成中' | '申請中' | '差戻し' | '承認済' | '取下げ';
 
 /** m_kizaihyou_sts.sts_cod。DBのマスタと一致させること */
 export const KIZAIHYOU_STS: Record<EquipmentTableStatus, number> = {
@@ -8,17 +8,28 @@ export const KIZAIHYOU_STS: Record<EquipmentTableStatus, number> = {
   申請中: 2,
   差戻し: 3,
   承認済: 4,
+  取下げ: 5,
 };
 
 /** m_kizaihyou_sts.chip_colorが取りうる値（MUIのChip color） */
-export type EquipmentTableStatusColor = 'default' | 'info' | 'error' | 'success';
+export type EquipmentTableStatusColor = 'default' | 'info' | 'error' | 'success' | 'warning';
+
+/** 申請時に選ぶ受注部担当者の候補（m_userのうち受注部担当者権限を持つ人） */
+export type JuchuTantoOption = {
+  userId: string;
+  userNam: string;
+};
 
 export type EquipmentTableHistoryEntry = {
+  /** t_kizaihyou_his.his_id（スナップショット閲覧ページのURLに使う） */
+  hisId: number;
   at: string;
   user: string;
   action: string;
-  /** 承認・差戻し時のコメント */
+  /** 申請・承認・差戻し時のコメント、または自由コメント */
   comment: string;
+  /** その時点の機材表（スナップショット）を持つ履歴か */
+  hasSnapshot: boolean;
 };
 
 export type EquipmentTableContent = {
@@ -39,7 +50,16 @@ export type EquipmentTableListRow = {
   returnedAt: string | null;
   status: EquipmentTableStatus;
   statusColor: EquipmentTableStatusColor;
+  /** 受注部担当者名（申請先） */
   salesStaffName: string;
+  /** 依頼者名（申請した人）。未申請なら空文字 */
+  requesterName: string;
+  /**
+   * 申請時点のスナップショットを持つ操作履歴のhis_id。
+   * 承認済ならこれが「承認された内容」、申請中なら「申請した内容」。
+   * 申請していない・スナップショットが無い場合はnull。
+   */
+  shinseiHisId: number | null;
   history: EquipmentTableHistoryEntry[];
 };
 

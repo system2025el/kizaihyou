@@ -12,11 +12,17 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import CloseIcon from '@mui/icons-material/Close';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DownloadIcon from '@mui/icons-material/Download';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import ForumIcon from '@mui/icons-material/Forum';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import SaveIcon from '@mui/icons-material/Save';
 import SendIcon from '@mui/icons-material/Send';
+import UndoIcon from '@mui/icons-material/Undo';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import {
   Alert,
   Autocomplete,
@@ -28,7 +34,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   IconButton,
+  Paper,
   Snackbar,
   Table,
   TableBody,
@@ -39,13 +47,33 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
-import { EquipmentTableDetail, exportEquipmentTableExcel, saveEquipmentTable } from '@/app/_lib/equipment-table/funcs';
-import { EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
-import { requestEquipmentTable } from '@/app/_lib/equipment-table-list/funcs';
-import { EquipmentTableHead, EquipmentTableStatus } from '@/app/_lib/equipment-table-list/types';
+import { INITIAL_COLUMN_COUNT, INITIAL_ROW_COUNT } from '@/app/_lib/equipment-table/constants';
+import { downloadBase64File, PDF_MIME_TYPE, XLSM_MIME_TYPE } from '@/app/_lib/equipment-table/download';
+import {
+  createEquipmentTable,
+  EquipmentTableDetail,
+  exportEquipmentTableExcel,
+  exportEquipmentTablePdf,
+  saveEquipmentTable,
+} from '@/app/_lib/equipment-table/funcs';
+import { getActiveSum, getTotal } from '@/app/_lib/equipment-table/sheet';
+import { BumonOption, EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
+import {
+  copyEquipmentTable,
+  requestEquipmentTable,
+  withdrawEquipmentTable,
+} from '@/app/_lib/equipment-table-list/funcs';
+import {
+  EquipmentTableHead,
+  EquipmentTableHistoryEntry,
+  EquipmentTableStatus,
+  JuchuTantoOption,
+} from '@/app/_lib/equipment-table-list/types';
+import { EquipmentTimeline } from '@/app/_ui/equipment-timeline';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
 
 /** 未保存の行・列に付ける一時id。保存するとDBの採番したidに置き換わる */
@@ -67,14 +95,33 @@ const createRow = (): EquipmentRow => ({
 
 const createColumn = (label: string): EquipmentColumn => ({ id: createTempId('col'), label });
 
-const getActiveSum = (row: EquipmentRow) =>
-  Object.values(row.qty).reduce((sum, value) => sum + (Number(value) || 0), 0);
+/** まだ保存していない機材表の初期値 */
+const EMPTY_HEAD: EquipmentTableHead = {
+  eventName: '',
+  place: '',
+  clientName: '',
+  shippedAt: '',
+  returnedAt: '',
+  memo: '',
+};
+const createInitialColumns = () => Array.from({ length: INITIAL_COLUMN_COUNT }, () => createColumn(''));
+const createInitialRows = () => Array.from({ length: INITIAL_ROW_COUNT }, () => createRow());
 
-const getTotal = (row: EquipmentRow) => getActiveSum(row) + (Number(row.spare) || 0);
+/**
+ * ドラッグ用のid。
+ *
+ * 行・列のidは保存するとDBの採番（`123`のような数値文字列）に置き換わり、
+ * 行と列で値が衝突しうる。dnd-kitは1つのDndContext内でidが一意である必要があり、
+ * 掴んだのが行か列かの判定もこのidで行うため、種類を接頭辞で明示する。
+ */
+const toRowDragId = (rowId: string) => `row:${rowId}`;
+const toColumnDragId = (columnId: string) => `col:${columnId}`;
+const isRowDragId = (dragId: string) => dragId.startsWith('row:');
+const fromDragId = (dragId: string) => dragId.slice(dragId.indexOf(':') + 1);
 
-// 行(row-*)は縦方向、列(col-*)は横方向のみに移動を制限する
+// 行は縦方向、列は横方向のみに移動を制限する
 const restrictAxisByDraggedType: Modifier = (args) => {
-  const isRow = typeof args.active?.id === 'string' && args.active.id.startsWith('row');
+  const isRow = typeof args.active?.id === 'string' && isRowDragId(args.active.id);
   return isRow ? restrictToVerticalAxis(args) : restrictToHorizontalAxis(args);
 };
 
@@ -84,8 +131,15 @@ const filterKizaiOptions = createFilterOptions<KizaiOption>({
   stringify: (option) => option.kizaiNam,
 });
 
-/** 申請できるステータス（承認待ち・承認済みからは再申請しない） */
-const REQUESTABLE_STATUSES: EquipmentTableStatus[] = ['作成中', '差戻し'];
+/**
+ * 申請できるステータス。
+ * 申請中は二重申請になるので不可。承認済は、承認後も手元で整理・出力・流用できるよう
+ * 編集は許すが、承認済のものを作り替えて再申請するのは筋が悪いので不可にする。
+ */
+const REQUESTABLE_STATUSES: EquipmentTableStatus[] = ['作成中', '差戻し', '取下げ'];
+
+/** 編集できないステータス（申請中は承認者が見ている内容なので触らせない） */
+const READ_ONLY_STATUSES: EquipmentTableStatus[] = ['申請中'];
 
 /**
  * 未保存の変更があるかを判定するためのスナップショット。
@@ -108,12 +162,16 @@ const toSnapshot = (head: EquipmentTableHead, columns: EquipmentColumn[], rows: 
 
 type ColumnHeaderCellProps = {
   column: EquipmentColumn;
+  readOnly: boolean;
   onLabelChange: (label: string) => void;
   onRemove: () => void;
 };
 
-const ColumnHeaderCell = ({ column, onLabelChange, onRemove }: ColumnHeaderCellProps) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.id });
+const ColumnHeaderCell = ({ column, readOnly, onLabelChange, onRemove }: ColumnHeaderCellProps) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: toColumnDragId(column.id),
+    disabled: readOnly,
+  });
 
   return (
     <TableCell
@@ -128,18 +186,23 @@ const ColumnHeaderCell = ({ column, onLabelChange, onRemove }: ColumnHeaderCellP
       }}
     >
       <Box display="flex" alignItems="center" gap={0.5}>
-        <IconButton size="small" sx={{ cursor: 'grab' }} title="ドラッグで並び替え" {...attributes} {...listeners}>
-          <DragIndicatorIcon fontSize="small" />
-        </IconButton>
+        {!readOnly && (
+          <IconButton size="small" sx={{ cursor: 'grab' }} title="ドラッグで並び替え" {...attributes} {...listeners}>
+            <DragIndicatorIcon fontSize="small" />
+          </IconButton>
+        )}
         <TextField
           value={column.label}
           onChange={(e) => onLabelChange(e.target.value)}
           variant="standard"
           size="small"
+          slotProps={{ input: { readOnly } }}
         />
-        <IconButton size="small" onClick={onRemove} title="列を削除">
-          <DeleteIcon fontSize="small" />
-        </IconButton>
+        {!readOnly && (
+          <IconButton size="small" onClick={onRemove} title="列を削除">
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        )}
       </Box>
     </TableCell>
   );
@@ -149,7 +212,12 @@ type EquipmentRowViewProps = {
   row: EquipmentRow;
   index: number;
   columns: EquipmentColumn[];
+  /** この行の「名称」候補。種類で絞り込まれている場合がある */
   kizaiOptions: KizaiOption[];
+  /** 種類で絞り込んだ候補か（該当0件のときの案内文を変えるのに使う） */
+  kizaiOptionsFiltered: boolean;
+  kizaiKindOptions: string[];
+  readOnly: boolean;
   onUpdateRow: (patch: Partial<EquipmentRow>) => void;
   onUpdateQty: (columnId: string, value: string) => void;
   onRemoveRow: () => void;
@@ -160,11 +228,17 @@ const EquipmentRowView = ({
   index,
   columns,
   kizaiOptions,
+  kizaiOptionsFiltered,
+  kizaiKindOptions,
+  readOnly,
   onUpdateRow,
   onUpdateQty,
   onRemoveRow,
 }: EquipmentRowViewProps) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: toRowDragId(row.id),
+    disabled: readOnly,
+  });
 
   return (
     <TableRow
@@ -182,29 +256,52 @@ const EquipmentRowView = ({
           <Typography variant="caption" color="text.secondary">
             {index + 1}
           </Typography>
-          <IconButton size="small" sx={{ cursor: 'grab' }} title="ドラッグで並び替え" {...attributes} {...listeners}>
-            <DragIndicatorIcon fontSize="small" />
-          </IconButton>
-          <IconButton size="small" onClick={onRemoveRow} title="行を削除">
-            <DeleteIcon fontSize="small" />
-          </IconButton>
+          {!readOnly && (
+            <>
+              <IconButton
+                size="small"
+                sx={{ cursor: 'grab' }}
+                title="ドラッグで並び替え"
+                {...attributes}
+                {...listeners}
+              >
+                <DragIndicatorIcon fontSize="small" />
+              </IconButton>
+              <IconButton size="small" onClick={onRemoveRow} title="行を削除">
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </>
+          )}
         </Box>
       </TableCell>
       <TableCell>
-        <TextField
-          value={row.kind}
-          onChange={(e) => onUpdateRow({ kind: e.target.value })}
-          variant="standard"
+        <Autocomplete
+          freeSolo
+          readOnly={readOnly}
           size="small"
-          fullWidth
+          options={kizaiKindOptions}
+          inputValue={row.kind}
+          onInputChange={(_event, value, reason) => {
+            // 候補を選んだ直後のresetはonChange側で反映済みなので無視する
+            if (reason === 'reset') return;
+            onUpdateRow({ kind: value });
+          }}
+          onChange={(_event, value) => onUpdateRow({ kind: value ?? '' })}
+          renderInput={(params) => <TextField {...params} variant="standard" />}
         />
       </TableCell>
       <TableCell>
         <Autocomplete
           freeSolo
+          readOnly={readOnly}
           size="small"
           options={kizaiOptions}
           filterOptions={filterKizaiOptions}
+          noOptionsText={
+            kizaiOptionsFiltered
+              ? 'この種類に該当する機材がありません（種類を空にすると全機材から選べます）'
+              : '該当する機材がありません'
+          }
           getOptionLabel={(option) => (typeof option === 'string' ? option : option.kizaiNam)}
           inputValue={row.name}
           onInputChange={(_event, value, reason) => {
@@ -223,7 +320,12 @@ const EquipmentRowView = ({
         />
       </TableCell>
       <TableCell align="center">
-        <MemoTooltip title={row.name || '備考'} memo={row.remark} onSave={(remark) => onUpdateRow({ remark })} />
+        <MemoTooltip
+          title={row.name || '備考'}
+          memo={row.remark}
+          readOnly={readOnly}
+          onSave={(remark) => onUpdateRow({ remark })}
+        />
       </TableCell>
       <TableCell>
         <Typography variant="body2">{getTotal(row)}</Typography>
@@ -239,6 +341,7 @@ const EquipmentRowView = ({
           size="small"
           type="number"
           sx={{ width: 64 }}
+          slotProps={{ input: { readOnly } }}
         />
       </TableCell>
       {columns.map((column) => (
@@ -250,6 +353,7 @@ const EquipmentRowView = ({
             size="small"
             type="number"
             sx={{ width: 64 }}
+            slotProps={{ input: { readOnly } }}
           />
         </TableCell>
       ))}
@@ -258,23 +362,78 @@ const EquipmentRowView = ({
 };
 
 type EquipmentTableProps = {
-  detail: EquipmentTableDetail;
+  /** まだ保存していない（新規作成の）機材表ならnull */
+  detail: EquipmentTableDetail | null;
   kizaiOptions: KizaiOption[];
+  kizaiKindOptions: BumonOption[];
+  juchuTantoOptions: JuchuTantoOption[];
+  history: EquipmentTableHistoryEntry[];
 };
 
-const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
+const EquipmentTable = ({
+  detail,
+  kizaiOptions,
+  kizaiKindOptions,
+  juchuTantoOptions,
+  history,
+}: EquipmentTableProps) => {
   const router = useRouter();
-  const [head, setHead] = useState<EquipmentTableHead>(detail.head);
-  const [columns, setColumns] = useState<EquipmentColumn[]>(detail.columns);
-  const [rows, setRows] = useState<EquipmentRow[]>(detail.rows);
+  // 未保存のうちはkizaihyou_idが無い。最初の保存・申請でここに採番されたidが入る
+  const kizaihyouId = detail?.id ?? null;
+  const cod = detail?.cod ?? '';
+  const status = detail?.status ?? '作成中';
+
+  const [head, setHead] = useState<EquipmentTableHead>(detail?.head ?? EMPTY_HEAD);
+  const [columns, setColumns] = useState<EquipmentColumn[]>(detail?.columns ?? createInitialColumns);
+  const [rows, setRows] = useState<EquipmentRow[]>(detail?.rows ?? createInitialRows);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [confirmBack, setConfirmBack] = useState(false);
+  const [confirmCopy, setConfirmCopy] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawComment, setWithdrawComment] = useState('');
+  const [requestOpen, setRequestOpen] = useState(false);
+  // 差戻し・取下げ後の再申請では前回の申請先を初期選択にする
+  const [tantoUserIds, setTantoUserIds] = useState<string[]>(detail?.tantoUserIds ?? []);
+  const [requestComment, setRequestComment] = useState('');
+  const [timelineOpen, setTimelineOpen] = useState(true);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
+  const kindOptions = useMemo(
+    // 同名の部門があってもプルダウンには1つだけ出す
+    () => Array.from(new Set(kizaiKindOptions.map((bumon) => bumon.bumonNam))),
+    [kizaiKindOptions]
+  );
+
+  /**
+   * 種類（部門名）→ その部門に属する機材。
+   * 行ごとに1700件超を毎回filterすると重いので、部門名で引ける形に組み直しておく。
+   * 部門マスタに無い種類（手入力）はキーが無く、全機材が候補になる。
+   */
+  const kizaiOptionsByKind = useMemo(() => {
+    const byBumonId = new Map<number, KizaiOption[]>();
+    for (const kizai of kizaiOptions) {
+      if (kizai.bumonId === null) continue;
+      const list = byBumonId.get(kizai.bumonId);
+      if (list) list.push(kizai);
+      else byBumonId.set(kizai.bumonId, [kizai]);
+    }
+
+    const byKind = new Map<string, KizaiOption[]>();
+    for (const bumon of kizaiKindOptions) {
+      // 同名の部門があれば機材をまとめる
+      byKind.set(bumon.bumonNam, [...(byKind.get(bumon.bumonNam) ?? []), ...(byBumonId.get(bumon.bumonId) ?? [])]);
+    }
+    return byKind;
+  }, [kizaiOptions, kizaiKindOptions]);
+
+  // 申請中は承認者が申請時点の内容を見ているので、こちらからは触らせない
+  const readOnly = READ_ONLY_STATUSES.includes(status);
+  const canRequest = REQUESTABLE_STATUSES.includes(status);
+
   // 未保存の変更があるかは、最後に保存した内容とのスナップショット比較で判定する
-  const [savedSnapshot, setSavedSnapshot] = useState(() => toSnapshot(detail.head, detail.columns, detail.rows));
+  const [savedSnapshot, setSavedSnapshot] = useState(() => toSnapshot(head, columns, rows));
   const currentSnapshot = useMemo(() => toSnapshot(head, columns, rows), [head, columns, rows]);
   const isDirty = currentSnapshot !== savedSnapshot;
 
@@ -296,20 +455,26 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const activeId = String(active.id);
-    if (activeId.startsWith('row')) {
+
+    const activeId = fromDragId(String(active.id));
+    const overId = fromDragId(String(over.id));
+
+    if (isRowDragId(String(active.id))) {
       setRows((prev) => {
-        const oldIndex = prev.findIndex((row) => row.id === active.id);
-        const newIndex = prev.findIndex((row) => row.id === over.id);
+        const oldIndex = prev.findIndex((row) => row.id === activeId);
+        const newIndex = prev.findIndex((row) => row.id === overId);
+        if (oldIndex === -1 || newIndex === -1) return prev;
         return arrayMove(prev, oldIndex, newIndex);
       });
-    } else {
-      setColumns((prev) => {
-        const oldIndex = prev.findIndex((column) => column.id === active.id);
-        const newIndex = prev.findIndex((column) => column.id === over.id);
-        return arrayMove(prev, oldIndex, newIndex);
-      });
+      return;
     }
+
+    setColumns((prev) => {
+      const oldIndex = prev.findIndex((column) => column.id === activeId);
+      const newIndex = prev.findIndex((column) => column.id === overId);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
   };
 
   const updateRow = (id: string, patch: Partial<EquipmentRow>) => {
@@ -324,12 +489,26 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
     setColumns((prev) => prev.map((column) => (column.id === id ? { ...column, label } : column)));
   };
 
-  const save = async () => {
+  /**
+   * 保存する。まだ保存していない機材表ならここで作成する。
+   * recordHistory=falseは申請の直前の保存用（「申請」の履歴にスナップショットを残すため）。
+   *
+   * @returns 機材表のkizaihyou_id（新規作成ならここで採番されたもの）
+   */
+  const save = async (recordHistory = true): Promise<number> => {
     const snapshot = toSnapshot(head, columns, rows);
-    await saveEquipmentTable(detail.id, head, columns, rows);
+
+    if (kizaihyouId === null) {
+      const createdId = await createEquipmentTable(head, columns, rows);
+      setSavedSnapshot(snapshot);
+      return createdId;
+    }
+
+    await saveEquipmentTable(kizaihyouId, head, columns, rows, recordHistory);
     setSavedSnapshot(snapshot);
     // 保存で列・行のidが採番し直されるため、サーバーから読み直す
     router.refresh();
+    return kizaihyouId;
   };
 
   const handleBack = () => {
@@ -344,7 +523,12 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
     setBusy(true);
     setError('');
     try {
-      await save();
+      const savedId = await save();
+      if (kizaihyouId === null) {
+        // 採番されたIDの画面へ。戻るで未保存の画面に戻らないようreplaceする
+        router.replace(`/equipment-table/${savedId}`);
+        return;
+      }
       setMessage('保存しました');
     } catch {
       setError('保存に失敗しました。');
@@ -353,22 +537,29 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
     }
   };
 
-  const handleExport = async () => {
+  const handleExportExcel = async () => {
     setBusy(true);
     setError('');
     try {
-      const { fileName, base64 } = await exportEquipmentTableExcel(detail.cod, head, columns, rows);
-      // base64で受け取ったバイナリをBlobに戻してダウンロードさせる
-      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.ms-excel.sheet.macroEnabled.12' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName;
-      link.click();
-      URL.revokeObjectURL(url);
+      const { fileName, base64 } = await exportEquipmentTableExcel(cod, head, columns, rows);
+      downloadBase64File(fileName, base64, XLSM_MIME_TYPE);
       setMessage('Excelを出力しました');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Excelの出力に失敗しました。');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const { fileName, base64 } = await exportEquipmentTablePdf(cod, head, columns, rows);
+      downloadBase64File(fileName, base64, PDF_MIME_TYPE);
+      setMessage('PDFを出力しました');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'PDFの出力に失敗しました。');
     } finally {
       setBusy(false);
     }
@@ -378,12 +569,53 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
     setBusy(true);
     setError('');
     try {
-      await save();
-      await requestEquipmentTable(detail.id);
+      const savedId = await save(false);
+      await requestEquipmentTable(savedId, tantoUserIds, requestComment.trim());
       setMessage('申請しました');
       router.push('/equipment-table-list');
     } catch {
       setError('申請に失敗しました。');
+      setRequestOpen(false);
+      setBusy(false);
+    }
+  };
+
+  // 流用元にはDBの内容が使われるので、未保存の変更があるときは先に確認する
+  const copyAndCreate = async (saveFirst: boolean) => {
+    setBusy(true);
+    setError('');
+    try {
+      if (saveFirst) await save();
+      if (kizaihyouId === null) return;
+      const id = await copyEquipmentTable(kizaihyouId, cod);
+      router.push(`/equipment-table/${id}`);
+    } catch {
+      setError('流用しての新規作成に失敗しました。');
+      setConfirmCopy(false);
+      setBusy(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (isDirty) {
+      setConfirmCopy(true);
+      return;
+    }
+    copyAndCreate(false);
+  };
+
+  const handleWithdraw = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      if (kizaihyouId === null) return;
+      await withdrawEquipmentTable(kizaihyouId, withdrawComment.trim());
+      setWithdrawOpen(false);
+      setMessage('申請を取り下げました');
+      router.refresh();
+    } catch {
+      setError('申請の取り下げに失敗しました。');
+    } finally {
       setBusy(false);
     }
   };
@@ -402,30 +634,58 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
             <IconButton onClick={handleBack} title="機材表履歴一覧に戻る">
               <ArrowBackIcon />
             </IconButton>
-            <Typography variant="h5">機材表 {detail.cod}</Typography>
-            <Chip label={detail.status} size="small" />
+            <Typography variant="h5">機材表 {cod || '（新規作成）'}</Typography>
+            <Chip label={status} size="small" />
           </Box>
           <Box display="flex" gap={1}>
-            <Button startIcon={<AddIcon />} onClick={addRow}>
+            <Button startIcon={<AddIcon />} onClick={addRow} disabled={readOnly}>
               行を追加
             </Button>
-            <Button startIcon={<AddIcon />} onClick={addColumn}>
+            <Button startIcon={<AddIcon />} onClick={addColumn} disabled={readOnly}>
               列を追加
             </Button>
-            <Button startIcon={<DownloadIcon />} onClick={handleExport} disabled={busy}>
+            <Button
+              startIcon={<ForumIcon />}
+              onClick={() => setTimelineOpen((prev) => !prev)}
+              disabled={kizaihyouId === null}
+            >
+              タイムライン
+            </Button>
+            <Button startIcon={<ContentCopyIcon />} onClick={handleCopy} disabled={busy || kizaihyouId === null}>
+              流用して新規作成
+            </Button>
+            <Button startIcon={<DownloadIcon />} onClick={handleExportExcel} disabled={busy}>
               Excel出力
             </Button>
-            <Button startIcon={<SaveIcon />} variant="outlined" onClick={handleSave} disabled={busy}>
+            <Button startIcon={<PictureAsPdfIcon />} onClick={handleExportPdf} disabled={busy}>
+              PDF出力
+            </Button>
+            <Button startIcon={<SaveIcon />} variant="outlined" onClick={handleSave} disabled={busy || readOnly}>
               保存
             </Button>
-            <Button
-              startIcon={<SendIcon />}
-              variant="contained"
-              onClick={handleRequest}
-              disabled={busy || !REQUESTABLE_STATUSES.includes(detail.status)}
-            >
-              申請
-            </Button>
+            {status === '申請中' ? (
+              <Button
+                startIcon={<UndoIcon />}
+                variant="contained"
+                color="warning"
+                onClick={() => {
+                  setWithdrawComment('');
+                  setWithdrawOpen(true);
+                }}
+                disabled={busy}
+              >
+                取り下げ
+              </Button>
+            ) : (
+              <Button
+                startIcon={<SendIcon />}
+                variant="contained"
+                onClick={() => setRequestOpen(true)}
+                disabled={busy || !canRequest}
+              >
+                申請
+              </Button>
+            )}
           </Box>
         </Box>
 
@@ -435,96 +695,155 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
           </Alert>
         )}
 
-        <Box display="flex" flexWrap="wrap" gap={2} mb={2}>
-          <TextField
-            label="公演名"
-            value={head.eventName}
-            onChange={(e) => setHead({ ...head, eventName: e.target.value })}
-            size="small"
-            sx={{ minWidth: 260 }}
-          />
-          <TextField
-            label="場所"
-            value={head.place}
-            onChange={(e) => setHead({ ...head, place: e.target.value })}
-            size="small"
-            sx={{ minWidth: 200 }}
-          />
-          <TextField
-            label="顧客名"
-            value={head.clientName}
-            onChange={(e) => setHead({ ...head, clientName: e.target.value })}
-            size="small"
-            sx={{ minWidth: 200 }}
-          />
-          <TextField
-            label="出庫日"
-            value={head.shippedAt}
-            onChange={(e) => setHead({ ...head, shippedAt: e.target.value })}
-            size="small"
-            type="date"
-            slotProps={{ inputLabel: { shrink: true } }}
-          />
-          <TextField
-            label="入庫日"
-            value={head.returnedAt}
-            onChange={(e) => setHead({ ...head, returnedAt: e.target.value })}
-            size="small"
-            type="date"
-            slotProps={{ inputLabel: { shrink: true } }}
-          />
-          <TextField
-            label="備考"
-            value={head.memo}
-            onChange={(e) => setHead({ ...head, memo: e.target.value })}
-            size="small"
-            sx={{ minWidth: 280, flexGrow: 1 }}
-          />
-        </Box>
+        {kizaihyouId === null && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            まだ保存していません。保存するか申請すると機材表IDが採番され、機材表履歴一覧に載ってタイムライン・出力・流用が使えるようになります。
+          </Alert>
+        )}
+        {readOnly && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            申請中の機材表は編集できません。編集するには申請を取り下げてください。
+          </Alert>
+        )}
+        {status === '承認済' && (
+          <Alert
+            severity="success"
+            sx={{ mb: 2 }}
+            action={
+              // 承認後も編集できるので、承認された内容（申請時点）はこちらから開く
+              detail?.shinseiHisId && (
+                <Button
+                  size="small"
+                  component={Link}
+                  href={`/equipment-table/${detail.id}/snapshot/${detail.shinseiHisId}`}
+                  target="_blank"
+                >
+                  承認された内容を開く
+                </Button>
+              )
+            }
+          >
+            承認済みです。編集・出力・流用はできますが、再申請はできません（申請が必要なら流用して新規作成してください）。
+          </Alert>
+        )}
 
-        <TableContainer sx={{ maxHeight: '80vh' }}>
-          <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ minWidth: 130 }} />
-                <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
-                <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
-                <TableCell align="center" sx={{ minWidth: 60 }}>
-                  備考
-                </TableCell>
-                <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
-                <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
-                <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
-                <SortableContext items={columns.map((column) => column.id)} strategy={horizontalListSortingStrategy}>
-                  {columns.map((column) => (
-                    <ColumnHeaderCell
-                      key={column.id}
-                      column={column}
-                      onLabelChange={(label) => updateColumnLabel(column.id, label)}
-                      onRemove={() => removeColumn(column.id)}
-                    />
-                  ))}
-                </SortableContext>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <SortableContext items={rows.map((row) => row.id)} strategy={verticalListSortingStrategy}>
-                {rows.map((row, index) => (
-                  <EquipmentRowView
-                    key={row.id}
-                    row={row}
-                    index={index}
-                    columns={columns}
-                    kizaiOptions={kizaiOptions}
-                    onUpdateRow={(patch) => updateRow(row.id, patch)}
-                    onUpdateQty={(columnId, value) => updateQty(row.id, columnId, value)}
-                    onRemoveRow={() => removeRow(row.id)}
-                  />
-                ))}
-              </SortableContext>
-            </TableBody>
-          </Table>
-        </TableContainer>
+        <Box display="flex" gap={2} alignItems="flex-start">
+          <Box flexGrow={1} minWidth={0}>
+            <Box display="flex" flexWrap="wrap" gap={2} mb={2}>
+              <TextField
+                label="公演名"
+                value={head.eventName}
+                onChange={(e) => setHead({ ...head, eventName: e.target.value })}
+                size="small"
+                sx={{ minWidth: 260 }}
+                slotProps={{ input: { readOnly } }}
+              />
+              <TextField
+                label="場所"
+                value={head.place}
+                onChange={(e) => setHead({ ...head, place: e.target.value })}
+                size="small"
+                sx={{ minWidth: 200 }}
+                slotProps={{ input: { readOnly } }}
+              />
+              <TextField
+                label="顧客名"
+                value={head.clientName}
+                onChange={(e) => setHead({ ...head, clientName: e.target.value })}
+                size="small"
+                sx={{ minWidth: 200 }}
+                slotProps={{ input: { readOnly } }}
+              />
+              <TextField
+                label="出庫日"
+                value={head.shippedAt}
+                onChange={(e) => setHead({ ...head, shippedAt: e.target.value })}
+                size="small"
+                type="date"
+                slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
+              />
+              <TextField
+                label="入庫日"
+                value={head.returnedAt}
+                onChange={(e) => setHead({ ...head, returnedAt: e.target.value })}
+                size="small"
+                type="date"
+                slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
+              />
+              <TextField
+                label="備考"
+                value={head.memo}
+                onChange={(e) => setHead({ ...head, memo: e.target.value })}
+                size="small"
+                sx={{ minWidth: 280, flexGrow: 1 }}
+                slotProps={{ input: { readOnly } }}
+              />
+            </Box>
+
+            <TableContainer sx={{ maxHeight: '80vh' }}>
+              <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ minWidth: 130 }} />
+                    <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
+                    <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
+                    <TableCell align="center" sx={{ minWidth: 60 }}>
+                      備考
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
+                    <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
+                    <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
+                    <SortableContext
+                      items={columns.map((column) => toColumnDragId(column.id))}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      {columns.map((column) => (
+                        <ColumnHeaderCell
+                          key={column.id}
+                          column={column}
+                          readOnly={readOnly}
+                          onLabelChange={(label) => updateColumnLabel(column.id, label)}
+                          onRemove={() => removeColumn(column.id)}
+                        />
+                      ))}
+                    </SortableContext>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  <SortableContext
+                    items={rows.map((row) => toRowDragId(row.id))}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {rows.map((row, index) => (
+                      <EquipmentRowView
+                        key={row.id}
+                        row={row}
+                        index={index}
+                        columns={columns}
+                        kizaiOptions={kizaiOptionsByKind.get(row.kind) ?? kizaiOptions}
+                        kizaiOptionsFiltered={kizaiOptionsByKind.has(row.kind)}
+                        kizaiKindOptions={kindOptions}
+                        readOnly={readOnly}
+                        onUpdateRow={(patch) => updateRow(row.id, patch)}
+                        onUpdateQty={(columnId, value) => updateQty(row.id, columnId, value)}
+                        onRemoveRow={() => removeRow(row.id)}
+                      />
+                    ))}
+                  </SortableContext>
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+
+          {timelineOpen && kizaihyouId !== null && (
+            <EquipmentTimeline
+              kizaihyouId={kizaihyouId}
+              history={history}
+              onClose={() => setTimelineOpen(false)}
+              onError={setError}
+            />
+          )}
+        </Box>
 
         <Dialog open={confirmBack} onClose={() => setConfirmBack(false)}>
           <DialogTitle fontSize="medium">保存していない変更があります</DialogTitle>
@@ -536,6 +855,93 @@ const EquipmentTable = ({ detail, kizaiOptions }: EquipmentTableProps) => {
               破棄して戻る
             </Button>
             <Button onClick={() => setConfirmBack(false)}>キャンセル</Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={withdrawOpen} onClose={() => setWithdrawOpen(false)} fullWidth maxWidth="xs">
+          <DialogTitle fontSize="medium">申請を取り下げる</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" mb={2}>
+              取り下げると編集できるようになり、あらためて申請もできます。
+            </Typography>
+            <TextField
+              label="コメント（任意）"
+              value={withdrawComment}
+              onChange={(e) => setWithdrawComment(e.target.value)}
+              size="small"
+              multiline
+              minRows={3}
+              fullWidth
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" color="warning" onClick={handleWithdraw} disabled={busy}>
+              取り下げる
+            </Button>
+            <Button onClick={() => setWithdrawOpen(false)} disabled={busy}>
+              キャンセル
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={confirmCopy} onClose={() => setConfirmCopy(false)}>
+          <DialogTitle fontSize="medium">保存していない変更があります</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">流用元には保存済みの内容が使われます。保存してから流用しますか？</Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" onClick={() => copyAndCreate(true)} disabled={busy}>
+              保存して流用
+            </Button>
+            <Button onClick={() => copyAndCreate(false)} disabled={busy}>
+              保存せずに流用
+            </Button>
+            <Button onClick={() => setConfirmCopy(false)} disabled={busy}>
+              キャンセル
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={requestOpen} onClose={() => setRequestOpen(false)} fullWidth maxWidth="xs">
+          <DialogTitle fontSize="medium">機材表を申請する</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" mb={2}>
+              申請先の受注部担当者を選んでください（複数選べます。そのうち1人が承認すれば承認済になります）。
+              編集中の内容も一緒に保存されます。
+            </Typography>
+            {juchuTantoOptions.length ? (
+              <Autocomplete
+                multiple
+                disableCloseOnSelect
+                size="small"
+                options={juchuTantoOptions}
+                getOptionLabel={(option) => option.userNam}
+                isOptionEqualToValue={(option, value) => option.userId === value.userId}
+                value={juchuTantoOptions.filter((option) => tantoUserIds.includes(option.userId))}
+                onChange={(_event, value) => setTantoUserIds(value.map((option) => option.userId))}
+                renderInput={(params) => <TextField {...params} label="受注部担当者（複数可）" />}
+              />
+            ) : (
+              <Alert severity="warning">受注部担当者の権限を持つユーザーが登録されていません。</Alert>
+            )}
+            <TextField
+              label="コメント（任意）"
+              value={requestComment}
+              onChange={(e) => setRequestComment(e.target.value)}
+              size="small"
+              multiline
+              minRows={3}
+              fullWidth
+              sx={{ mt: 2 }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" onClick={handleRequest} disabled={busy || !tantoUserIds.length}>
+              申請する
+            </Button>
+            <Button onClick={() => setRequestOpen(false)} disabled={busy}>
+              キャンセル
+            </Button>
           </DialogActions>
         </Dialog>
 

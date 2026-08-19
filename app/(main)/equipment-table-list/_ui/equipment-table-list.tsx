@@ -3,7 +3,9 @@
 import AddIcon from '@mui/icons-material/Add';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HistoryIcon from '@mui/icons-material/History';
+import RuleFolderIcon from '@mui/icons-material/RuleFolder';
 import SearchIcon from '@mui/icons-material/Search';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import {
   Alert,
   Box,
@@ -25,12 +27,23 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import NextLink from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
-import { createEquipmentTable } from '@/app/_lib/equipment-table/funcs';
 import { copyEquipmentTable, fetchEquipmentTableList } from '@/app/_lib/equipment-table-list/funcs';
 import { EquipmentTableListRow } from '@/app/_lib/equipment-table-list/types';
+
+/**
+ * 承認済・申請中の行に出す「その時点の内容」へのリンク。
+ * 承認後も機材表は編集できるので、一覧の内容と承認された内容はずれていく。
+ */
+const snapshotLinkLabel = (row: EquipmentTableListRow) => {
+  if (!row.shinseiHisId) return null;
+  if (row.status === '承認済') return '承認された内容を開く';
+  if (row.status === '申請中') return '申請した内容を開く';
+  return null;
+};
 
 const matchesQuery = (row: EquipmentTableListRow, query: string) => {
   const target = [row.cod, row.eventName, row.place, row.clientName, row.salesStaffName, row.status]
@@ -66,24 +79,8 @@ const EquipmentTableList = () => {
 
   const filteredRows = query.trim() ? rows.filter((row) => matchesQuery(row, query.trim())) : rows;
 
-  const handleCreateNew = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const id = await createEquipmentTable({
-        eventName: '',
-        place: '',
-        clientName: '',
-        shippedAt: '',
-        returnedAt: '',
-        memo: '',
-      });
-      router.push(`/equipment-table/${id}`);
-    } catch {
-      setError('機材表の新規作成に失敗しました。');
-      setBusy(false);
-    }
-  };
+  // レコードは機材表画面で最初に保存したときに作る（書きかけを一覧に出さないため）
+  const handleCreateNew = () => router.push('/equipment-table/new');
 
   const handleCopyAndCreateNew = async (source: EquipmentTableListRow) => {
     setBusy(true);
@@ -144,6 +141,7 @@ const EquipmentTableList = () => {
               <TableCell>入庫日</TableCell>
               <TableCell>状態ステータス</TableCell>
               <TableCell>受注部担当者名</TableCell>
+              <TableCell align="center">承認・申請内容</TableCell>
               <TableCell align="center">履歴</TableCell>
               <TableCell align="center">コピーして新規作成</TableCell>
             </TableRow>
@@ -151,14 +149,14 @@ const EquipmentTableList = () => {
           <TableBody>
             {loading && (
               <TableRow>
-                <TableCell colSpan={12} align="center">
+                <TableCell colSpan={13} align="center">
                   <CircularProgress size={24} />
                 </TableCell>
               </TableRow>
             )}
             {!loading && filteredRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={12} align="center">
+                <TableCell colSpan={13} align="center">
                   該当する機材表がありません
                 </TableCell>
               </TableRow>
@@ -182,6 +180,19 @@ const EquipmentTableList = () => {
                 </TableCell>
                 <TableCell>{row.salesStaffName}</TableCell>
                 <TableCell align="center">
+                  {snapshotLinkLabel(row) && (
+                    <IconButton
+                      size="small"
+                      component={NextLink}
+                      href={`/equipment-table/${row.id}/snapshot/${row.shinseiHisId}`}
+                      target="_blank"
+                      title={snapshotLinkLabel(row) ?? ''}
+                    >
+                      <RuleFolderIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                </TableCell>
+                <TableCell align="center">
                   <IconButton size="small" onClick={() => setHistoryTarget(row)} title="履歴を見る">
                     <HistoryIcon fontSize="small" />
                   </IconButton>
@@ -202,39 +213,57 @@ const EquipmentTableList = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={historyTarget !== null} onClose={() => setHistoryTarget(null)}>
-        <DialogTitle fontSize="medium">
-          {historyTarget?.cod} {historyTarget?.eventName} の履歴
-        </DialogTitle>
-        <DialogContent>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>日時</TableCell>
-                <TableCell>担当者</TableCell>
-                <TableCell>内容</TableCell>
-                <TableCell>コメント</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {historyTarget?.history.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} align="center">
-                    履歴はありません
-                  </TableCell>
-                </TableRow>
-              )}
-              {historyTarget?.history.map((entry, index) => (
-                <TableRow key={`${entry.at}-${entry.action}-${index}`}>
-                  <TableCell>{entry.at}</TableCell>
-                  <TableCell>{entry.user}</TableCell>
-                  <TableCell>{entry.action}</TableCell>
-                  <TableCell>{entry.comment}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </DialogContent>
+      <Dialog open={historyTarget !== null} onClose={() => setHistoryTarget(null)} maxWidth="md">
+        {historyTarget && (
+          <>
+            <DialogTitle fontSize="medium">
+              {historyTarget.cod} {historyTarget.eventName} の履歴
+            </DialogTitle>
+            <DialogContent>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>日時</TableCell>
+                    <TableCell>担当者</TableCell>
+                    <TableCell>内容</TableCell>
+                    <TableCell>コメント</TableCell>
+                    <TableCell align="center">機材表</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {historyTarget.history.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} align="center">
+                        履歴はありません
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {historyTarget.history.map((entry, index) => (
+                    <TableRow key={`${entry.at}-${entry.action}-${index}`}>
+                      <TableCell>{entry.at}</TableCell>
+                      <TableCell>{entry.user}</TableCell>
+                      <TableCell>{entry.action}</TableCell>
+                      <TableCell sx={{ whiteSpace: 'pre-wrap' }}>{entry.comment}</TableCell>
+                      <TableCell align="center">
+                        {entry.hasSnapshot && (
+                          <IconButton
+                            size="small"
+                            component={NextLink}
+                            href={`/equipment-table/${historyTarget.id}/snapshot/${entry.hisId}`}
+                            target="_blank"
+                            title="この時点の機材表を見る"
+                          >
+                            <VisibilityIcon fontSize="small" />
+                          </IconButton>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </DialogContent>
+          </>
+        )}
       </Dialog>
     </Box>
   );

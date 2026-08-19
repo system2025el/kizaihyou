@@ -22,8 +22,15 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
 - **経緯**: 当初はkikikanと同一Supabaseプロジェクト・同一`public`スキーマを直接共有する想定だったが、「Auth（ユーザー認証）をkizaihyou単独で管理したい」という理由から専用プロジェクトに切り替えた。
 - **project_ref**: `lqxuybzllbgprzuuynfp`（kizaihyou専用、開発用に1つのみ作成。本番/ステージングを分ける運用にする場合は別途プロジェクトを作成しこの節を更新する）
 - **スキーマ**: kizaihyou専用の`public`スキーマ。kikikanのテーブル定義とは無関係なので、スキーマ変更時にkikikan側とすり合わせる必要はない（後述の`m_kizai`参照を除く）。
-- **kikikanの機材マスタ参照**: 機材表の「名称」はkikikanの機材マスタ`m_kizai`を参照する。接続は`app/_lib/db/kikikan/`配下（`KIKIKAN_*`環境変数）。**kikikanのservice_roleキーは`permission denied for schema public`になり使えない**（kikikan側でschema publicへのGRANTが無い）ため、anonキーで参照している。anonキーとはいえ他プロジェクトの認証情報なので`NEXT_PUBLIC_`を付けず、Server Actionsからのみ使うこと。別Postgresインスタンスなので外部キー制約は張れず、`t_kizaihyou_row.kizai_id`に値のみ保持し整合性はアプリ側で担保する。
+- **kikikanの在庫参照**: 機材表承認画面（`/equipment-table-request/[id]`）の日別在庫は、kikikanの`v_zaiko_qty`（`zaiko_qty = 保有数 - 引き当て数`）と`v_kizai_qty`（保有数）を**参照するだけ**で求める。kikikanの受注機材明細画面と同じビューなので在庫の計算ロジックを二重に持たない。実装は`app/_lib/db/kikikan/v-zaiko-qty.ts`。
+  - `v_zaiko_qty`は**引き当てのある日しか行が無い**。行が無い日は保有数をそのまま在庫数として扱う（kikikan側の`COALESCE(v.zaiko_qty, k.kizai_qty)`と同じ）。
+  - 別Postgresインスタンスなので日付×機材のCROSS JOINをSQLで組めない。組み合わせはTypeScript側（`fetchEquipmentStockMap`）で作る。
+  - 件数が「機材数×日数」になりPostgRESTの1回の上限（1000件）を超えうるので、機材IDを分割したうえで`range`でページングする。
+  - **機材表はkikikanの受注ではないので、kikikanの在庫にはこの機材表の要求数が含まれていない**。出庫日〜入庫日の差し引きは画面側で行う（kikikanの受注機材明細画面が「自受注の保存済み引当を足し戻してから画面の値を引く」のとは非対称になる点に注意）。
+  - 機材表の行が手入力の名称（`kizai_id`がnull）だと在庫を引けないので、在庫欄は`-`で表示する。
+- **kikikanのマスタ参照**: 機材表の「名称」はkikikanの機材マスタ`m_kizai`を、「種類」は部門マスタ`m_bumon`を参照する（種類は入力補助だけで、`t_kizaihyou_row.kizai_kind`はテキストしか持たず部門IDは保持しない）。接続は`app/_lib/db/kikikan/`配下（`KIKIKAN_*`環境変数）。**kikikanのservice_roleキーは`permission denied for schema public`になり使えない**（kikikan側でschema publicへのGRANTが無い）ため、anonキーで参照している。anonキーとはいえ他プロジェクトの認証情報なので`NEXT_PUBLIC_`を付けず、Server Actionsからのみ使うこと。別Postgresインスタンスなので外部キー制約は張れず、`t_kizaihyou_row.kizai_id`に値のみ保持し整合性はアプリ側で担保する。
 - **Auth**: kikikanとは完全に別。同じ人間でもkikikanとkizaihyouでユーザーレコード（UUID）は別になる。将来、受注部担当者などのデータをkikikan側の担当者マスタと突き合わせる場合は、UUIDではなくメールアドレス等の別キーで名寄せする設計が必要。
+- **kikikanへの受注連携（未実装）**: 承認済みの機材表からkikikanの受注伝票・受注機材明細を作る構想がある。必要なテーブル・項目の対応、kizaihyouに足りない情報、採番や権限の制約は`docs/kikikan-juchu-renkei.md`に整理してある。**現時点でkikikanへの書き込みは一切していない**（参照のみ）。
 - **将来のクロスプロジェクトアクセス**: kikikan（本番・ステージングともVercel上）からこのプロジェクトのDBを直接参照・更新する構想がある。技術的には(a) kikikan側にこのプロジェクト用の`DATABASE_URL`・Supabase-jsクライアントをもう1組追加、(b) このプロジェクト側でkikikanから参照される想定のテーブルに適切なRLSポリシーを設定、で実現可能。ただし2つの別Postgresインスタンスにまたがる単一トランザクションは組めない点に注意（アプリ側で部分失敗のハンドリングを設計する）。
 - **IPv4アドオン**: このプロジェクトは新しい方式で作成されているため、Postgresへの直接接続（`app/_lib/db/postgres.ts`のpg Pool、ポート6543）はデフォルトでIPv6のみ。IPv4のみのネットワーク（このリポジトリの開発環境を含む）から接続するには、SupabaseダッシュボードでIPv4アドオン（有料、月$4程度）を有効化する必要がある（本プロジェクトでは有効化済み）。Supabase-js経由のアクセス（PostgREST、ポート443のHTTPS）はこの制約を受けず、アドオン無しでも常に接続可能。
 - **マイグレーション**: DDLは`.mcp.json`のSupabase MCP（`apply_migration`）で適用し、同じSQLを`scripts/db-migration/*.sql`にも残す（kikikanの`scripts/db-migration/`と同じ運用）。適用後は`get_advisors`でRLS漏れ等を確認する。
@@ -31,10 +38,11 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
 
 ## アーキテクチャ（現状）
 
-画面（`/login`・`/equipment-table/[id]`・`/equipment-table-list`・`/equipment-table-request`）はDBに接続済み。モックが残るのは受注明細（機材）の在庫数だけで、これはkikikanの受注と紐づいていないため`_lib/mock-data.ts`の固定値を使っている。設計はkikikan(`C:\EL\CLAUDE.md`)を踏襲する：
+画面（`/login`・`/equipment-table/[id]`・`/equipment-table-list`・`/equipment-table-request`）はDBに接続済みで、モックデータは残っていない。設計はkikikan(`C:\EL\CLAUDE.md`)を踏襲する：
 
 - **ルーティング**: `app/`配下のNext.js App Router。`app/(main)/`＝ハンバーガーメニュー付きの画面、`app/equipment-table/[id]`と`/login`はその外側（全幅）。
 - **認証**: `middleware.ts`が全ページでセッションを検証し、未ログインなら`/login`へ飛ばす（公開パスは`/login`・`/error`のみ）。**セッションはlocalStorageではなくCookieに保存する**（`@supabase/ssr`）。そうしないとServer Actions側がログイン状態を認識できず、RLSに弾かれる。ログイン直後に`ensureCurrentUser()`が`m_user`のプロファイルを作る（サインアップ画面は未実装なので、氏名の初期値はメールアドレスのローカル部）。
+- **権限**: kikikanと同じ整数ビットマスク方式で、`m_user.permission`のビットを`app/_lib/auth/permission.ts`の`hasPermission`でAND判定する（現状は`juchu_tanto: 1`＝受注部担当者と`system: 65535`のみ）。PostgRESTはビット演算ができないため、絞り込みはDB層ではなくfuncs層で行う（`selectUserList`→`fetchJuchuTantoOptions`）。**ユーザーの追加はSupabase AuthのAdmin APIでauthアカウントを作ってから`m_user`にプロファイルを入れる**（`m_user.user_id`が`auth.users`へのFKなのでSQLだけでは追加できない）。権限を編集する画面はまだ無いので、変更はDBを直接更新する。
 - **コロケーション**: 機能ごとに`_lib/`（型・Server Actions・ビジネスロジック）と`_ui/`（コンポーネント）のサブフォルダを持たせる。アプリ全体で共有するコードは`app/_lib/`・`app/_ui/`。
 - **データアクセス — 同一DBに対する2種類のクライアント**（kikikanと同一方針）:
   - `app/_lib/db/postgres.ts` — 生の`pg` `Pool`（HMRを跨いで生き残るよう`globalForPool`でシングルトン化）。手書きSQL、トランザクション、複雑・大量データのクエリに使用。機材表の保存（`saveKizaihyouContent`）とコピー（`copyKizaihyou`）がこれ。**RLSはバイパスされる**ので、呼び出し元のfuncs層で必ず`requireCurrentUser()`を通すこと。
@@ -58,7 +66,17 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
 - 日付はExcelのシリアル値（1899-12-30起点）で書く。書式は雛形のセル側に付いている。
 - 文字列は`t="inlineStr"`で書き込み、`sharedStrings.xml`は触らない（件数の整合を取らずに済むため）。
 - Server Actionsはバイナリを返せないのでbase64で受け渡し、クライアントでBlobに戻してダウンロードさせる。
-- `resources/`はimportしていないのでNextのファイル追跡に乗らない。`next.config.ts`の`outputFileTracingIncludes`で明示的にビルド成果物へ含めている。
+- `resources/`はimportしていないのでNextのファイル追跡に乗らない。`next.config.ts`の`outputFileTracingIncludes`で明示的にビルド成果物へ含めている（機材表画面とスナップショット閲覧ページの両方に指定が要る）。
+
+### PDF出力
+
+Excelと違って雛形が無いので、`pdf-lib`で表を組み立てる（実装は`app/_lib/equipment-table/pdf.ts`）。Excel出力と同じくServer Actionでバイト列を作り、base64で受け渡す。
+
+- **日本語フォントの埋め込みが必須**。pdf-libの標準14フォントでは日本語が出ないため、`resources/fonts/ipaexg.ttf`（IPAexゴシック。kikikanの`public/fonts/`と同じもの）を`@pdf-lib/fontkit`で`subset: true`にして埋め込む。サブセット化しないと6MBのフォントがそのままPDFに入る。
+- kikikanはPDFをクライアント側（`usePdf`フック）で作っているが、こちらはExcel出力に合わせてサーバー側にした。6MBのフォントをブラウザに送らずに済む。
+- **用紙はポジション列の数で決まる**。A4横で1列あたり24pt未満になるならA3横に切り替える。行はページ送りし、公演情報は1ページ目だけ、ページ番号は全ページに出す。
+- pdf-libは折り返しをしないので、セルに収まらない文字列は`fitText`で末尾を省略する。
+- 空行（何も入力されていない行）は出力しない。
 
 ### テーブル構成
 
@@ -66,15 +84,36 @@ DDLは`scripts/db-migration/01-init-kizaihyou.sql`（適用済み）。命名・
 
 | テーブル             | 役割                                                                                                                                                               |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `m_user`             | kizaihyou専用Authのユーザープロファイル（`auth.users`にFK）。`email`がkikikan側担当者との名寄せキー                                                                |
-| `m_kizaihyou_sts`    | 状態ステータスマスタ（作成中/申請中/差戻し/承認済＋MUIのChip color）                                                                                               |
+| `m_user`             | kizaihyou専用Authのユーザープロファイル（`auth.users`にFK）。`email`がkikikan側担当者との名寄せキー、`permission`が権限のビットマスク                              |
+| `m_kizaihyou_sts`    | 状態ステータスマスタ（作成中/申請中/差戻し/承認済/取下げ＋MUIのChip color）                                                                                        |
 | `t_kizaihyou`        | 機材表ヘッダ。`kizaihyou_cod`（`KZ-0001`形式）はシーケンスで自動採番。`mem`＝機材表全体の備考（Excelの`C4`）                                                       |
 | `t_kizaihyou_column` | 機材表の列（会場のポジション）。並び替え中に値が重複しうるため`dsp_ord_num`にunique制約は張らない                                                                  |
 | `t_kizaihyou_row`    | 機材表の行（機材1点）。`kizai_id`＝kikikanの`m_kizai.kizai_id`（FK無し、手入力名はnull）、`kizai_nam`は表示用スナップショット。`mem`＝行ごとの備考（Excelの`D`列） |
+| `t_kizaihyou_tanto`  | 機材表の申請先（受注部担当者）。複数指定でき、`user_nam`は申請時点の氏名スナップショット                                                                           |
 | `t_kizaihyou_qty`    | 行×列の数量セル。空セルはレコードを作らない（疎行列）。`TOTAL = ACTIVE合計 + spare_qty`                                                                            |
-| `t_kizaihyou_his`    | 操作履歴。`mem`に承認・差戻しコメント、`user_nam`は操作時点の氏名スナップショット                                                                                  |
+| `t_kizaihyou_his`    | 操作履歴兼タイムライン。`mem`にコメント、`snapshot`(jsonb)に保存・申請時点の機材表、`user_nam`は操作時点の氏名スナップショット                                     |
 
 - 公演名・場所・顧客名・出庫入庫日はkikikanの受注（`t_juchu_head`）とは切り離し、kizaihyou側で自前保持している。受注との紐付けは未実装。
+- **申請先の受注部担当者は複数指定できる**。実体は`t_kizaihyou_tanto`で、`t_kizaihyou.tanto_nam`は一覧表示用に「、」で連結した非正規化の文字列。**そのうち1人が承認すれば承認済になる運用で、全員の承認は要らない**（誰が承認したかは`t_kizaihyou_his`に残る）。申請先は再申請のたびに入れ直す。
+- **受注部担当者と申請者＝依頼者（`shinsei_nam`・`shinsei_user_id`）は申請時に決まる**。依頼者は操作履歴の`act_nam`から判定することもできるが、文言を変えた瞬間に壊れるのでヘッダに持たせている（機材表申請依頼画面の「依頼者名」列がこれ）。同じ理由で、現在の申請にあたる操作履歴も`shinsei_his_id`でヘッダから直接指す。申請はこの3つとステータスをまとめて更新するので、履歴だけ入ってヘッダが指せていない状態を作らないよう`requestKizaihyou`でpg Poolのトランザクションにしている。機材表画面の「申請」でモーダルを出し、`juchu_tanto`権限を持つユーザーから選ばせる（`requestEquipmentTable`）。新規作成・コピー時には入れない（コピー元からも引き継がない）。画面から渡ったuser_idはサーバー側で権限を取り直して検証する。
+- **`t_kizaihyou_his`は操作履歴とコメントを兼ねる**。右ペインのタイムライン（`app/_ui/equipment-timeline.tsx`。機材表画面と機材表承認画面で共有）がこのテーブルを古い順にそのまま表示し、自由コメントは`act_nam='コメント'`で積む（`addEquipmentTableComment`）。申請・承認・差戻しのコメントも同じ`mem`に入るので、機材表履歴一覧の履歴ダイアログにも一緒に並ぶ。申請先の担当者名は`mem`ではなく`act_nam`（`申請（受注部担当者：◯◯）`）に残す——`mem`は利用者が書いた文章のためのもの、という切り分け。
+- **保存・申請時に、その時点のシート全体を`t_kizaihyou_his.snapshot`（jsonb）へ残す**。関連テーブルを複製せずJSON1本にしているのは、保存が元々「列・行を全削除して入れ直す」＝シート全体を一括で扱う作りで、スナップショットは閲覧専用だから。閲覧は`/equipment-table/[id]/snapshot/[hisId]`（編集画面とは別の閲覧専用ページ。タイムラインと機材表履歴一覧の履歴から**別タブで**開く——編集中の内容を失わないため）。
+  - 一覧で`snapshot`本体を引かずにアイコンの有無を判定できるよう、生成列`snapshot_flg`（0/1）を持たせている。
+  - **中身が直前のスナップショットと同じなら「保存」の履歴を作らない**（`normalizeSnapshot`で比較）。何も変えずに保存を押しただけの履歴でタイムラインが埋まるのを防ぐ。
+  - **比較用の正規化では必ず値を配列に並べ直すこと**。行・列のidは保存のたびに採番し直されるうえ、DBから読んだ側はjsonbがキー順を並べ替えているため、オブジェクトのまま`JSON.stringify`すると同じ内容でも一致しない。
+  - 申請の直前の保存は`saveEquipmentTable(..., recordHistory=false)`で履歴を作らず、「申請」の履歴にスナップショットをまとめる。
+- **「新規作成」を押した時点ではDBにレコードを作らない**。書きかけの機材表が機材表履歴一覧に並ばないようにするため、`/equipment-table/new`（`detail`がnullの機材表画面）を開くだけにして、**最初の保存または申請で`createEquipmentTable`を呼んで作る**。作成後は`router.replace`で採番されたIDの画面に差し替える（戻るで未保存の画面に戻らないように）。
+  - 「新規作成」の操作履歴には作成時点のスナップショットを載せるので、タイムラインは最初の履歴から内容を辿れる。
+  - 未保存のうちは機材表IDが要る操作（タイムライン・流用して新規作成）を止める。Excel/PDF出力はファイル名の機材表IDが空になるだけなので使える。
+- **ステータスごとに編集・申請の可否が変わる**（機材表画面の`READ_ONLY_STATUSES`／`REQUESTABLE_STATUSES`）。
+  - **申請中は編集不可**。承認者が申請時点の内容を見ているため。編集したい場合は「取り下げ」（`withdrawEquipmentTable`、ステータス`取下げ`）で編集できる状態に戻す。差戻しと同じ扱いだが、受注部が戻したのか申請者が引っ込めたのかを一覧で区別できるよう別ステータスにしている。
+  - **承認済は編集できるが再申請はできない**。承認後に手元で整理してExcel/PDFに出したり、少し手を加えて流用コピーしたりするため。あらためて申請したい場合は「流用して新規作成」で別の機材表にする。
+  - 編集不可のときは入力欄を`readOnly`にし、行・列の追加／削除とドラッグ並び替えを消す（`useSortable({ disabled })`）。
+- **機材表承認画面（`/equipment-table-request/[id]`）は現在の内容ではなく、申請時点のスナップショットを表示する**（`fetchEquipmentTableForApproval`）。申請後も申請者はメモとして機材表を編集できる仕様なので、現在の内容を見せると「承認した内容」と「申請された内容」が食い違うため。ヘッダ・行・在庫の期間もすべてスナップショット側の値を使う。
+  - 現在の内容がスナップショットと違う場合は`editedAfterRequest`で承認者に注意を出す（比較は`normalizeSnapshot`）。
+  - この仕組みより前に申請されたものはスナップショットが無いので現在の内容にフォールバックし、その旨を画面に出す（`fromSnapshot=false`）。
+  - 承認後も編集できる以上、一覧・機材表画面に出るのは編集後の現在の内容になる。「承認された内容」は`shinsei_his_id`のスナップショット閲覧ページで見る導線を、機材表履歴一覧の「承認・申請内容」列と機材表画面の承認済メッセージに置いている（申請中なら「申請した内容」）。
+- **「流用して新規作成」は流用元が2種類ある**。機材表画面のボタンは現在のDBの内容から（`copyKizaihyou`）、閲覧専用ページのボタンはそのスナップショットの内容から（`createEquipmentTableFromSnapshot`）作る。どちらもステータスは「作成中」に戻り、出庫日・入庫日と受注部担当者は引き継がない。機材表画面では未保存の変更が流用元に入らないため、`isDirty`なら「保存して流用／保存せずに流用」を確認する。
 - RLSは全テーブルで有効。現状は認証済みユーザーに一律許可（権限の細分化は未導入）。kikikanから参照させる場合は別途ポリシーが必要。
 - **機材表の保存は「列・行を全削除して入れ直す」方式**（数量セルは列のcascadeで消える）。画面がシート全体を一括編集するための割り切りで、保存のたびに`column_id`・`row_id`は採番し直される。画面側の未保存の行・列には`row-new-1`のような一時idを振り、保存時は配列のindexで数量セルを対応付けている。
 

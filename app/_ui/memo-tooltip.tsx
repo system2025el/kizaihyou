@@ -17,10 +17,12 @@ type MemoTooltipProps = {
   title: string;
   memo: string;
   onSave: (memo: string) => void;
+  /** 閲覧のみ（申請中など編集できない状態） */
+  readOnly?: boolean;
 };
 
 // kikikan(C:\EL)の app/(main)/(eq-order-detail)/_ui/memo-tooltip.tsx と同じUIパターン
-export const MemoTooltip = ({ title, memo, onSave }: MemoTooltipProps) => {
+export const MemoTooltip = ({ title, memo, onSave, readOnly = false }: MemoTooltipProps) => {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(memo);
 
@@ -45,13 +47,22 @@ export const MemoTooltip = ({ title, memo, onSave }: MemoTooltipProps) => {
       <Dialog open={open} onClose={handleClose}>
         <DialogTitle fontSize="medium">{title}</DialogTitle>
         <DialogContent>
-          <TextField value={draft} onChange={(e) => setDraft(e.target.value)} fullWidth multiline minRows={3} />
+          <TextField
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            fullWidth
+            multiline
+            minRows={3}
+            slotProps={{ input: { readOnly } }}
+          />
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleSave} variant="contained">
-            保存
-          </Button>
-          <Button onClick={handleClose}>キャンセル</Button>
+          {!readOnly && (
+            <Button onClick={handleSave} variant="contained">
+              保存
+            </Button>
+          )}
+          <Button onClick={handleClose}>{readOnly ? '閉じる' : 'キャンセル'}</Button>
         </DialogActions>
       </Dialog>
     </>

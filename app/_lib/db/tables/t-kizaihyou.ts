@@ -1,5 +1,6 @@
 'use server';
 
+import { EquipmentTableSnapshot } from '../../equipment-table/types';
 import pool from '../postgres';
 import { SCHEMA } from '../schema';
 import { createClient } from '../supabase-server';
@@ -7,8 +8,10 @@ import { createClient } from '../supabase-server';
 /** 一覧・詳細で共通して取得するヘッダの列（ステータス名も一緒に引く） */
 const HEAD_COLUMNS = `
   kizaihyou_id, kizaihyou_cod, koen_nam, basho_nam, kokyaku_nam,
-  shukko_dat, nyuko_dat, sts_cod, tanto_nam, mem, add_dat, upd_dat,
-  m_kizaihyou_sts ( sts_nam, chip_color )
+  shukko_dat, nyuko_dat, sts_cod, tanto_nam,
+  shinsei_nam, shinsei_his_id, mem, add_dat, upd_dat,
+  m_kizaihyou_sts ( sts_nam, chip_color ),
+  t_kizaihyou_tanto ( user_id, user_nam, dsp_ord_num )
 `;
 
 /**
@@ -112,19 +115,15 @@ export type KizaihyouHeadInput = {
 };
 
 /**
- * 機材表ヘッダを新規登録する関数（ステータスは「作成中」、kizaihyou_codは自動採番）
+ * 機材表ヘッダを新規登録する関数（ステータスは「作成中」、kizaihyou_codは自動採番）。
+ * 受注部担当者（tanto_nam・tanto_user_id）は申請時に決まるので、ここでは入れない。
+ *
  * @param head 登録する値
- * @param tantoNam 受注部担当者名
- * @param tantoUserId 受注部担当者のuser_id
+ * @param addUser 作成者名
  * @param copyFromId コピー元のkizaihyou_id（コピー作成でない場合はnull）
  * @returns 登録した機材表ヘッダ
  */
-export const insertKizaihyou = async (
-  head: KizaihyouHeadInput,
-  tantoNam: string,
-  tantoUserId: string,
-  copyFromId: number | null
-) => {
+export const insertKizaihyou = async (head: KizaihyouHeadInput, addUser: string, copyFromId: number | null) => {
   const supabase = await createClient();
   try {
     return await supabase
@@ -137,11 +136,9 @@ export const insertKizaihyou = async (
         shukko_dat: head.shukkoDat,
         nyuko_dat: head.nyukoDat,
         mem: head.mem,
-        tanto_nam: tantoNam,
-        tanto_user_id: tantoUserId,
         copy_from_id: copyFromId,
-        add_user: tantoNam,
-        upd_user: tantoNam,
+        add_user: addUser,
+        upd_user: addUser,
       })
       .select('kizaihyou_id, kizaihyou_cod')
       .single();
@@ -169,31 +166,116 @@ export const updateKizaihyouSts = async (kizaihyouId: number, stsCod: number, up
   }
 };
 
+/** 申請時に受け取る値 */
+export type KizaihyouRequestInput = {
+  kizaihyouId: number;
+  /** 更新後のsts_cod（申請中） */
+  stsCod: number;
+  /** 受注部担当者名（表示用。複数なら「、」で連結したもの） */
+  tantoNam: string;
+  /** 申請先に選んだ受注部担当者。この誰か1人が承認すれば承認済になる */
+  tanto: { userId: string; userNam: string }[];
+  /** 申請者（依頼者）名（表示用スナップショット） */
+  shinseiNam: string;
+  shinseiUserId: string;
+  /** 履歴に残す操作内容 */
+  actNam: string;
+  /** 申請コメント */
+  mem: string | null;
+  /** 申請時点の機材表の内容 */
+  snapshot: EquipmentTableSnapshot;
+};
+
+/**
+ * 機材表を申請する関数。
+ *
+ * 申請の操作履歴（申請時点のスナップショット付き）を残し、ヘッダのステータス・
+ * 申請者・申請履歴への参照と、申請先（受注部担当者、複数可）をまとめて更新する。
+ * 機材表承認画面はここで残した履歴のスナップショットを表示するので、履歴だけ入って
+ * ヘッダが指せていない状態を作らないよう、Supabase-jsではなくpg Poolの
+ * トランザクションで行う。
+ *
+ * 申請先は差戻し後の再申請で選び直せるよう、毎回入れ直す。
+ *
+ * @param input 申請の内容
+ * @returns 残した操作履歴のhis_id
+ */
+export const requestKizaihyou = async (input: KizaihyouRequestInput) => {
+  const connection = await pool.connect();
+  try {
+    await connection.query('BEGIN');
+
+    const his = await connection.query<{ his_id: string }>(
+      `INSERT INTO ${SCHEMA}.t_kizaihyou_his (kizaihyou_id, act_nam, user_id, user_nam, mem, snapshot)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+         RETURNING his_id`,
+      [
+        input.kizaihyouId,
+        input.actNam,
+        input.shinseiUserId,
+        input.shinseiNam,
+        input.mem,
+        JSON.stringify(input.snapshot),
+      ]
+    );
+    const hisId = Number(his.rows[0].his_id);
+
+    await connection.query(
+      `UPDATE ${SCHEMA}.t_kizaihyou
+          SET sts_cod = $2, tanto_nam = $3,
+              shinsei_nam = $4, shinsei_user_id = $5, shinsei_his_id = $6, upd_user = $4
+        WHERE kizaihyou_id = $1`,
+      [input.kizaihyouId, input.stsCod, input.tantoNam, input.shinseiNam, input.shinseiUserId, hisId]
+    );
+
+    await connection.query(`DELETE FROM ${SCHEMA}.t_kizaihyou_tanto WHERE kizaihyou_id = $1`, [input.kizaihyouId]);
+    await connection.query(
+      `INSERT INTO ${SCHEMA}.t_kizaihyou_tanto (kizaihyou_id, user_id, user_nam, dsp_ord_num)
+       SELECT $1, user_id, user_nam, ord
+         FROM unnest($2::uuid[], $3::text[], $4::int[]) AS t(user_id, user_nam, ord)`,
+      [
+        input.kizaihyouId,
+        input.tanto.map((tanto) => tanto.userId),
+        input.tanto.map((tanto) => tanto.userNam),
+        input.tanto.map((_tanto, index) => index + 1),
+      ]
+    );
+
+    await connection.query('COMMIT');
+    return hisId;
+  } catch (e) {
+    await connection.query('ROLLBACK');
+    throw new Error('[requestKizaihyou] DBエラー:', { cause: e });
+  } finally {
+    connection.release();
+  }
+};
+
 /**
  * 既存の機材表をコピーして新しい機材表を作る関数。
  *
  * ヘッダのコピーと列・行・数量の複製を1トランザクションで行う。
  * 数量セルの新旧の対応付けは、列・行のdsp_ord_num（表示順）で行う。
- * ステータスは「作成中」に戻り、出庫日・入庫日は引き継がない。
+ * ステータスは「作成中」に戻り、出庫日・入庫日・受注部担当者は引き継がない
+ * （受注部担当者は申請時に選び直す）。
  *
  * @param sourceId コピー元のkizaihyou_id
- * @param tantoNam 受注部担当者名
- * @param tantoUserId 受注部担当者のuser_id
+ * @param addUser 作成者名
  * @returns 作成した機材表のkizaihyou_idとkizaihyou_cod
  */
-export const copyKizaihyou = async (sourceId: number, tantoNam: string, tantoUserId: string) => {
+export const copyKizaihyou = async (sourceId: number, addUser: string) => {
   const connection = await pool.connect();
   try {
     await connection.query('BEGIN');
 
     const head = await connection.query<{ kizaihyou_id: string; kizaihyou_cod: string }>(
       `INSERT INTO ${SCHEMA}.t_kizaihyou
-              (koen_nam, basho_nam, kokyaku_nam, mem, tanto_nam, tanto_user_id, copy_from_id, add_user, upd_user)
-       SELECT koen_nam, basho_nam, kokyaku_nam, mem, $2, $3, kizaihyou_id, $2, $2
+              (koen_nam, basho_nam, kokyaku_nam, mem, copy_from_id, add_user, upd_user)
+       SELECT koen_nam, basho_nam, kokyaku_nam, mem, kizaihyou_id, $2, $2
          FROM ${SCHEMA}.t_kizaihyou
         WHERE kizaihyou_id = $1
     RETURNING kizaihyou_id, kizaihyou_cod`,
-      [sourceId, tantoNam, tantoUserId]
+      [sourceId, addUser]
     );
     if (!head.rows.length) throw new Error(`コピー元の機材表が見つかりません (kizaihyou_id=${sourceId})`);
     const newId = Number(head.rows[0].kizaihyou_id);

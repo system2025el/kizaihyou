@@ -1,10 +1,25 @@
 export type EquipmentOrderRow = {
   id: string;
+  /** kikikanのm_kizai.kizai_id。手入力の名称はnullで、在庫を引けない */
+  kizaiId: number | null;
   kizaiName: string;
   mem: string;
   mem2: string;
   orderedQty: number;
   spareQty: number;
-  // このオーダー自体の予約分を除いた基準在庫数（オーダー期間外の表示値）
-  baseStock: number;
 };
+
+/**
+ * kikikanから取得した機材1点の在庫。
+ * この機材表の要求数はkikikanの受注に入っていないので含まれていない
+ * （画面側で出庫日〜入庫日の分を差し引いて表示する）。
+ */
+export type EquipmentStock = {
+  /** 保有数。引き当てが無い日の在庫数 */
+  kizaiQty: number;
+  /** YYYY-MM-DD → 在庫数。引き当てが無い日はキーが無い */
+  stockByDate: Record<string, number>;
+};
+
+/** 機材ID → 在庫 */
+export type EquipmentStockMap = Record<number, EquipmentStock>;

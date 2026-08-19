@@ -1,19 +1,23 @@
 'use server';
 
 import { requireCurrentUser } from '../auth/funcs';
-import { copyKizaihyou, selectKizaihyouList, updateKizaihyouSts } from '../db/tables/t-kizaihyou';
+import { hasPermission, PERMISSION } from '../auth/permission';
+import { selectUserList } from '../db/tables/m-user';
+import { copyKizaihyou, requestKizaihyou, selectKizaihyouList, updateKizaihyouSts } from '../db/tables/t-kizaihyou';
 import { insertKizaihyouHis, selectKizaihyouHisList } from '../db/tables/t-kizaihyou-his';
+import { fetchEquipmentTable } from '../equipment-table/funcs';
 import { formatDate, formatDateTime } from '../format';
 import {
   EquipmentTableHistoryEntry,
   EquipmentTableListRow,
   EquipmentTableStatus,
   EquipmentTableStatusColor,
+  JuchuTantoOption,
   KIZAIHYOU_STS,
 } from './types';
 
-const STATUS_NAMES: EquipmentTableStatus[] = ['作成中', '申請中', '差戻し', '承認済'];
-const STATUS_COLORS: EquipmentTableStatusColor[] = ['default', 'info', 'error', 'success'];
+const STATUS_NAMES: EquipmentTableStatus[] = ['作成中', '申請中', '差戻し', '承認済', '取下げ'];
+const STATUS_COLORS: EquipmentTableStatusColor[] = ['default', 'info', 'error', 'success', 'warning'];
 
 const toStatus = (value: string | undefined): EquipmentTableStatus =>
   STATUS_NAMES.find((name) => name === value) ?? '作成中';
@@ -37,29 +41,39 @@ export const fetchEquipmentTableList = async (): Promise<EquipmentTableListRow[]
   for (const his of histories ?? []) {
     const entries = historyByKizaihyou.get(his.kizaihyou_id) ?? [];
     entries.push({
+      hisId: his.his_id,
       at: formatDateTime(his.act_dat),
       user: his.user_nam,
       action: his.act_nam,
       comment: his.mem ?? '',
+      hasSnapshot: his.snapshot_flg === 1,
     });
     historyByKizaihyou.set(his.kizaihyou_id, entries);
   }
 
-  return data.map((head) => ({
-    id: head.kizaihyou_id,
-    cod: head.kizaihyou_cod,
-    eventName: head.koen_nam,
-    place: head.basho_nam ?? '',
-    clientName: head.kokyaku_nam ?? '',
-    createdAt: formatDateTime(head.add_dat),
-    updatedAt: formatDateTime(head.upd_dat),
-    shippedAt: formatDate(head.shukko_dat),
-    returnedAt: formatDate(head.nyuko_dat),
-    status: toStatus(head.m_kizaihyou_sts?.sts_nam),
-    statusColor: toStatusColor(head.m_kizaihyou_sts?.chip_color),
-    salesStaffName: head.tanto_nam,
-    history: historyByKizaihyou.get(head.kizaihyou_id) ?? [],
-  }));
+  return data.map((head) => {
+    // 申請の履歴にスナップショットがあるときだけ「申請/承認された内容」を開かせる
+    const history = historyByKizaihyou.get(head.kizaihyou_id) ?? [];
+    const shinseiHis = history.find((entry) => entry.hisId === head.shinsei_his_id);
+
+    return {
+      id: head.kizaihyou_id,
+      cod: head.kizaihyou_cod,
+      eventName: head.koen_nam,
+      place: head.basho_nam ?? '',
+      clientName: head.kokyaku_nam ?? '',
+      createdAt: formatDateTime(head.add_dat),
+      updatedAt: formatDateTime(head.upd_dat),
+      shippedAt: formatDate(head.shukko_dat),
+      returnedAt: formatDate(head.nyuko_dat),
+      status: toStatus(head.m_kizaihyou_sts?.sts_nam),
+      statusColor: toStatusColor(head.m_kizaihyou_sts?.chip_color),
+      salesStaffName: head.tanto_nam,
+      requesterName: head.shinsei_nam,
+      shinseiHisId: shinseiHis?.hasSnapshot ? shinseiHis.hisId : null,
+      history,
+    };
+  });
 };
 
 /**
@@ -70,7 +84,7 @@ export const fetchEquipmentTableList = async (): Promise<EquipmentTableListRow[]
  */
 export const copyEquipmentTable = async (sourceId: number, sourceCod: string): Promise<number> => {
   const user = await requireCurrentUser();
-  const { kizaihyouId } = await copyKizaihyou(sourceId, user.userNam, user.userId);
+  const { kizaihyouId } = await copyKizaihyou(sourceId, user.userNam);
 
   const { error } = await insertKizaihyouHis(
     kizaihyouId,
@@ -107,11 +121,74 @@ const changeStatus = async (
 };
 
 /**
- * 機材表を申請する関数
- * @param kizaihyouId 対象のkizaihyou_id
+ * 申請先に選べる受注部担当者を取得する関数。
+ * 権限はビットマスクで、PostgRESTではビット演算ができないため、
+ * 有効なユーザーを取得してからここで絞り込む。
+ *
+ * @returns 表示順に並んだ受注部担当者
  */
-export const requestEquipmentTable = async (kizaihyouId: number) => {
-  await changeStatus(kizaihyouId, '申請中', '申請', null);
+export const fetchJuchuTantoOptions = async (): Promise<JuchuTantoOption[]> => {
+  const { data, error } = await selectUserList();
+  if (error) throw new Error(`[fetchJuchuTantoOptions] ユーザーの取得に失敗しました: ${error.message}`);
+
+  return (data ?? [])
+    .filter((user) => hasPermission(user.permission, PERMISSION.juchu_tanto))
+    .map((user) => ({ userId: user.user_id, userNam: user.user_nam }));
+};
+
+/**
+ * 機材表を申請する関数。申請先の受注部担当者と申請者をヘッダに確定させ、
+ * 申請時点のスナップショット付きで操作履歴を残す。
+ *
+ * 申請後も申請者は機材表を編集できるので、機材表承認画面はこのスナップショットを
+ * 表示する（現在の内容を見せると承認した内容と申請された内容が食い違う）。
+ *
+ * 申請先は複数指定できる。**そのうち1人が承認すれば承認済**になる運用で、
+ * 全員の承認は要らない（誰が承認したかは操作履歴に残る）。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ * @param tantoUserIds 申請先に選んだ受注部担当者のuser_id（1件以上）
+ * @param comment 申請コメント
+ */
+export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: string[], comment: string) => {
+  const user = await requireCurrentUser();
+
+  // 画面から渡ったuser_idをそのまま信用せず、権限のある人かを取り直して確かめる
+  const options = await fetchJuchuTantoOptions();
+  const tanto = options.filter((option) => tantoUserIds.includes(option.userId));
+  if (!tanto.length) throw new Error('[requestEquipmentTable] 受注部担当者を1人以上選んでください');
+  if (tanto.length !== new Set(tantoUserIds).size)
+    throw new Error('[requestEquipmentTable] 受注部担当者として選べないユーザーが含まれています');
+
+  // 呼び出し元が直前に保存しているので、画面から受け取り直さずDBから読み直す
+  const detail = await fetchEquipmentTable(kizaihyouId);
+  if (!detail) throw new Error('[requestEquipmentTable] 機材表が見つかりません');
+
+  const tantoNam = tanto.map((option) => option.userNam).join('、');
+
+  await requestKizaihyou({
+    kizaihyouId,
+    stsCod: KIZAIHYOU_STS['申請中'],
+    tantoNam,
+    tanto,
+    shinseiNam: user.userNam,
+    shinseiUserId: user.userId,
+    // 申請先はコメント欄ではなくact_namに残す（コピー作成の履歴と同じ書き方）
+    actNam: `申請（受注部担当者：${tantoNam}）`,
+    mem: comment || null,
+    snapshot: { head: detail.head, columns: detail.columns, rows: detail.rows },
+  });
+};
+
+/**
+ * 申請者が自分の申請を取り下げる関数。
+ * 差戻しと同じく編集できる状態に戻り、再申請もできる。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ * @param comment 取り下げコメント
+ */
+export const withdrawEquipmentTable = async (kizaihyouId: number, comment: string) => {
+  await changeStatus(kizaihyouId, '取下げ', '取り下げ', comment || null);
 };
 
 /**

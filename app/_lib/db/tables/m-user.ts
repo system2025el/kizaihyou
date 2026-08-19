@@ -37,3 +37,26 @@ export const insertUser = async (userId: string, email: string, userNam: string)
     throw new Error('[insertUser] DBエラー:', { cause: e });
   }
 };
+
+/**
+ * 有効なユーザープロファイルを表示順に取得する関数。
+ *
+ * 権限（ビットマスク）の判定はPostgRESTでビット演算ができないため、
+ * ここでは絞り込まずに呼び出し元（funcs層）で`hasPermission`を使う。
+ *
+ * @returns 表示順（dsp_ord_numがnullのものは末尾）に並んだユーザー
+ */
+export const selectUserList = async () => {
+  const supabase = await createClient();
+  try {
+    return await supabase
+      .schema(SCHEMA)
+      .from('m_user')
+      .select('user_id, user_nam, permission, dsp_ord_num')
+      .eq('del_flg', 0)
+      .order('dsp_ord_num', { nullsFirst: false })
+      .order('user_nam');
+  } catch (e) {
+    throw new Error('[selectUserList] DBエラー:', { cause: e });
+  }
+};

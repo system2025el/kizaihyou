@@ -4,6 +4,7 @@ import path from 'node:path';
 import { unzipSync, zipSync } from 'fflate';
 
 import { EquipmentTableHead } from '../equipment-table-list/types';
+import { buildKizaihyouFileName } from './sheet';
 import { EquipmentColumn, EquipmentRow } from './types';
 
 /**
@@ -289,8 +290,5 @@ export const buildKizaihyouExcel = async (input: ExcelExportInput): Promise<Uint
  * @param eventName 公演名
  * @returns ファイル名
  */
-export const buildKizaihyouExcelFileName = (kizaihyouCod: string, eventName: string) => {
-  // Windowsでファイル名に使えない文字を除く
-  const safeName = eventName.replace(/[\\/:*?"<>|]/g, '_').trim();
-  return `${kizaihyouCod}${safeName ? `_${safeName}` : ''}_機材表.xlsm`;
-};
+export const buildKizaihyouExcelFileName = (kizaihyouCod: string, eventName: string) =>
+  buildKizaihyouFileName(kizaihyouCod, eventName, 'xlsm');

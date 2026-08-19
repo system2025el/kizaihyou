@@ -1,3 +1,5 @@
+import { EquipmentTableHead } from '@/app/_lib/equipment-table-list/types';
+
 export type EquipmentColumn = {
   id: string;
   label: string;
@@ -15,8 +17,26 @@ export type EquipmentRow = {
   qty: Record<string, string>;
 };
 
+/**
+ * 保存・申請時点の機材表の内容。`t_kizaihyou_his.snapshot`にJSONで入る。
+ * 閲覧専用ページで表示するだけなので、行・列のidは保存時のものをそのまま持つ。
+ */
+export type EquipmentTableSnapshot = {
+  head: EquipmentTableHead;
+  columns: EquipmentColumn[];
+  rows: EquipmentRow[];
+};
+
 /** 「名称」欄の候補（kikikanの機材マスタ由来） */
 export type KizaiOption = {
   kizaiId: number;
   kizaiNam: string;
+  /** kikikanのm_kizai.bumon_id。「種類」で候補を絞るのに使う */
+  bumonId: number | null;
+};
+
+/** 「種類」欄の候補（kikikanの部門マスタ由来） */
+export type BumonOption = {
+  bumonId: number;
+  bumonNam: string;
 };
