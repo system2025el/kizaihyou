@@ -23,6 +23,12 @@ export type EquipmentStock = {
   kizaiQty: number;
   /** YYYY-MM-DD → 在庫数。引き当てが無い日はキーが無い */
   stockByDate: Record<string, number>;
+  /**
+   * YYYY-MM-DD → この機材表が機材管理に立てている引き当て数量。
+   * 連携後は機材管理の在庫からも引かれているので、二重計上を避けるため足し戻す。
+   * 未連携ならキーが無い（＝0）。
+   */
+  linkedByDate: Record<string, number>;
 };
 
 /** 機材ID → 在庫 */

@@ -406,6 +406,8 @@ export type EquipmentTableApproval = {
   canApprove: boolean;
   /** kikikanに作った受注番号。未連携ならnull */
   juchuHeadId: number | null;
+  /** kikikanの受注機材ヘッダー。在庫の足し戻しに使う。未連携ならnull */
+  juchuKizaiHeadId: number | null;
   /** kikikanへの連携が最後まで済んでいるか（機材明細まで作られたか） */
   juchuLinked: boolean;
   /**
@@ -438,6 +440,7 @@ export const fetchEquipmentTableForApproval = async (kizaihyouId: number): Promi
     status: detail.status,
     canApprove: detail.tantoUserIds.includes(user.userId),
     juchuHeadId: detail.juchuHeadId,
+    juchuKizaiHeadId: detail.juchuKizaiHeadId,
     juchuLinked: detail.juchuKizaiHeadId !== null,
   };
   const request = detail.shinseiHisId === null ? null : await fetchEquipmentTableSnapshot(detail.shinseiHisId);

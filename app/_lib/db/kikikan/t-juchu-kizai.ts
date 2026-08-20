@@ -254,3 +254,48 @@ export const insertKikikanJuchuKizai = async (input: KikikanJuchuKizaiInput): Pr
 
   throw new Error('[insertKikikanJuchuKizai] 採番が繰り返し衝突しました');
 };
+
+/** この機材表から機材管理に立てた引き当て（機材ごと・日付ごとの数量） */
+export type KikikanAllocation = {
+  kizaiId: number;
+  /** 受注数＋予備数 */
+  qty: number;
+  /** 引き当てが効いている日（YYYY-MM-DD） */
+  dats: string[];
+};
+
+/**
+ * 指定した受注機材ヘッダーの引き当てを取得する関数（参照のみ）。
+ *
+ * 機材表承認画面の在庫は「機材管理の在庫 − 機材表の要求数」で出しているが、
+ * 機材管理へ連携した後はあちらにも引き当てが立つので二重に引かれてしまう。
+ * それを戻すために、この受注機材ヘッダーが持っている数量を機材ごとに返す。
+ *
+ * 日付は`t_juchu_kizai_honbanbi`の**種別を問わないDISTINCT**。
+ * 機材管理の在庫ビュー（v_zaiko_qty）が同じ取り方をしているのに合わせる。
+ *
+ * @param juchuHeadId 受注番号
+ * @param juchuKizaiHeadId 受注機材ヘッダーID
+ * @returns 機材ごとの引き当て
+ */
+export const selectKikikanAllocation = async (
+  juchuHeadId: number,
+  juchuKizaiHeadId: number
+): Promise<KikikanAllocation[]> => {
+  try {
+    const { rows } = await kikikanPool.query<{ kizai_id: number; qty: string; dats: string[] }>(
+      `SELECT m.kizai_id,
+              sum(coalesce(m.plan_kizai_qty, 0) + coalesce(m.plan_yobi_qty, 0))::text AS qty,
+              (SELECT array_agg(DISTINCT to_char(b.juchu_honbanbi_dat, 'YYYY-MM-DD'))
+                 FROM ${KIKIKAN_SCHEMA}.t_juchu_kizai_honbanbi b
+                WHERE b.juchu_head_id = $1 AND b.juchu_kizai_head_id = $2) AS dats
+         FROM ${KIKIKAN_SCHEMA}.t_juchu_kizai_meisai m
+        WHERE m.juchu_head_id = $1 AND m.juchu_kizai_head_id = $2
+        GROUP BY m.kizai_id`,
+      [juchuHeadId, juchuKizaiHeadId]
+    );
+    return rows.map((row) => ({ kizaiId: row.kizai_id, qty: Number(row.qty), dats: row.dats ?? [] }));
+  } catch (e) {
+    throw new Error('[selectKikikanAllocation] kikikanのDBエラー:', { cause: e });
+  }
+};

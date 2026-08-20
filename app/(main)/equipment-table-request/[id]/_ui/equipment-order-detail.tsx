@@ -213,17 +213,21 @@ const EquipmentOrderDetail = ({ approval, stockMap, history }: Props) => {
   }, [head.shippedAt, head.returnedAt]);
 
   /**
-   * その日の在庫数。kikikanの在庫にはこの機材表の分が入っていないので、
-   * 出庫日〜入庫日は画面の合計数を引いて表示する。
-   * kikikanの機材マスタに紐づいていない行（手入力の名称）は在庫を出せない。
+   * その日の在庫数。機材管理の機材マスタに紐づいていない行（手入力の名称）は出せない。
+   *
+   * 表示する値は「機材管理の在庫 ＋ この機材表が機材管理に立てている引き当て
+   * − 画面の要求数」。連携前は足し戻す分が0なので、単に要求数を引くだけになる。
+   * 連携後に足し戻さないと、機材管理側と画面側で二重に引かれてしまう。
    */
   const getStock = (row: EquipmentOrderRow, date: Date) => {
     const stock = row.kizaiId === null ? undefined : stockMap[row.kizaiId];
     if (!stock) return null;
 
+    const iso = formatIsoDate(date);
     // 引き当てのある日だけ行があるので、無い日は保有数がそのまま在庫数になる
-    const base = stock.stockByDate[formatIsoDate(date)] ?? stock.kizaiQty;
-    return isInRange(date) ? base - (row.orderedQty + row.spareQty) : base;
+    const base = stock.stockByDate[iso] ?? stock.kizaiQty;
+    const linked = stock.linkedByDate[iso] ?? 0;
+    return base + linked - (isInRange(date) ? row.orderedQty + row.spareQty : 0);
   };
 
   /**
@@ -325,6 +329,13 @@ const EquipmentOrderDetail = ({ approval, stockMap, history }: Props) => {
       {message && (
         <Alert severity="success" sx={{ mb: 2 }} onClose={() => setMessage('')}>
           {message}
+        </Alert>
+      )}
+
+      {approval.juchuLinked && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          この機材表は機材管理の受注 {approval.juchuHeadId} に連携済みです。在庫はあちらの引き当てを一度戻したうえで、
+          この画面の数量を引いて表示しています（二重に引かないため）。
         </Alert>
       )}
 

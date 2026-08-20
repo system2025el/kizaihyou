@@ -30,7 +30,13 @@ const Page = async ({ params }: { params: Promise<{ id: string }> }) => {
     ...(approval.diff?.removedRows ?? []).map((row) => row.kizaiId),
   ].filter((kizaiId): kizaiId is number => kizaiId !== null);
   const stockMap: EquipmentStockMap = range
-    ? await fetchEquipmentStockMap(kizaiIds, formatIsoDate(range.start), formatIsoDate(range.end))
+    ? await fetchEquipmentStockMap(
+        kizaiIds,
+        formatIsoDate(range.start),
+        formatIsoDate(range.end),
+        approval.juchuHeadId,
+        approval.juchuKizaiHeadId
+      )
     : {};
 
   const history = await fetchEquipmentTableHistory(kizaihyouId);
