@@ -62,6 +62,7 @@ import {
 } from '@/app/_lib/equipment-table/funcs';
 import { getActiveSum, getTotal } from '@/app/_lib/equipment-table/sheet';
 import { BumonOption, EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
+import { validateForRequest } from '@/app/_lib/equipment-table/validation';
 import {
   copyEquipmentTable,
   requestEquipmentTable,
@@ -436,6 +437,9 @@ const EquipmentTable = ({
   const [savedSnapshot, setSavedSnapshot] = useState(() => toSnapshot(head, columns, rows));
   const currentSnapshot = useMemo(() => toSnapshot(head, columns, rows), [head, columns, rows]);
   const isDirty = currentSnapshot !== savedSnapshot;
+
+  // 申請にだけ必要な入力チェック（保存は書きかけでもできる）
+  const requestErrors = useMemo(() => validateForRequest(head), [head]);
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
@@ -905,6 +909,19 @@ const EquipmentTable = ({
         <Dialog open={requestOpen} onClose={() => setRequestOpen(false)} fullWidth maxWidth="xs">
           <DialogTitle fontSize="medium">機材表を申請する</DialogTitle>
           <DialogContent>
+            {requestErrors.length > 0 && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                <Typography variant="body2" fontWeight="bold">
+                  次の項目を入力しないと申請できません
+                </Typography>
+                {requestErrors.map((error) => (
+                  <Typography key={error} variant="body2">
+                    ・{error}
+                  </Typography>
+                ))}
+              </Alert>
+            )}
+
             <Typography variant="body2" mb={2}>
               申請先の受注部担当者を選んでください（複数選べます。そのうち1人が承認すれば承認済になります）。
               編集中の内容も一緒に保存されます。
@@ -936,7 +953,11 @@ const EquipmentTable = ({
             />
           </DialogContent>
           <DialogActions>
-            <Button variant="contained" onClick={handleRequest} disabled={busy || !tantoUserIds.length}>
+            <Button
+              variant="contained"
+              onClick={handleRequest}
+              disabled={busy || !tantoUserIds.length || requestErrors.length > 0}
+            >
               申請する
             </Button>
             <Button onClick={() => setRequestOpen(false)} disabled={busy}>

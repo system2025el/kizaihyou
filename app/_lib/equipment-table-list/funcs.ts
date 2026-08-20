@@ -25,6 +25,7 @@ import {
 import { insertKizaihyouHis, selectKizaihyouHisSnapshotFlags } from '../db/tables/t-kizaihyou-his';
 import { fetchEquipmentTable } from '../equipment-table/funcs';
 import { getActiveSum } from '../equipment-table/sheet';
+import { validateForRequest } from '../equipment-table/validation';
 import { formatDate, formatDateTime, todayInJst } from '../format';
 import {
   EquipmentTableListRow,
@@ -183,6 +184,10 @@ export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: s
   // 呼び出し元が直前に保存しているので、画面から受け取り直さずDBから読み直す
   const detail = await fetchEquipmentTable(kizaihyouId);
   if (!detail) throw new Error('[requestEquipmentTable] 機材表が見つかりません');
+
+  // 画面でも止めているが、Server Actionsを直接呼ばれた場合に備えてここでも確かめる
+  const errors = validateForRequest(detail.head);
+  if (errors.length) throw new Error(`[requestEquipmentTable] ${errors.join(' ')}`);
 
   const tantoNam = tanto.map((option) => option.userNam).join('、');
 
