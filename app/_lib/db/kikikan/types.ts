@@ -27,7 +27,10 @@ export type KikikanDatabase = {
           kizai_id: number;
           kizai_nam: string;
           kizai_grp_cod: string | null;
+          /** 所属（1=KICS / 2=YARD / 3=厚木） */
           shozoku_id: number;
+          /** 定価。受注機材明細の単価の初期値になる */
+          reg_amt: number | null;
           bumon_id: number | null;
           dsp_ord_num: number | null;
           /** 1 = 削除済み */
@@ -42,6 +45,34 @@ export type KikikanDatabase = {
       };
     };
     Views: {
+      /**
+       * 機材選択用のビュー。kikikanの機材追加ダイアログもこれを
+       * `kizai_grp_cod, dsp_ord_num`順で表示しているので、機材表の入力候補も同じ順に揃える。
+       */
+      v_kizai_lst_sel: {
+        Row: {
+          kizai_id: number;
+          kizai_nam: string;
+          bumon_id: number | null;
+          kizai_grp_cod: number | null;
+          dsp_ord_num: number | null;
+          /** 1 = コンテナ。機材表では扱わないので候補から除く */
+          ctn_flg: number | null;
+          del_flg: number | null;
+          dsp_flg: number | null;
+        };
+        Relationships: [];
+      };
+      /** 部門選択用のビュー。kikikanは`kizai_grp_cod`順で並べている */
+      v_bumon_lst: {
+        Row: {
+          bumon_id: number;
+          bumon_nam: string;
+          kizai_grp_cod: number | null;
+          del_flg: number | null;
+        };
+        Relationships: [];
+      };
       /** 機材ごとの保有数（RFIDタグの実本数）。引き当てが無い日の在庫数はこれになる */
       v_kizai_qty: {
         Row: {

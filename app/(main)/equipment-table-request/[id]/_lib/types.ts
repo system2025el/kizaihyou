@@ -2,6 +2,10 @@ export type EquipmentOrderRow = {
   id: string;
   /** kikikanのm_kizai.kizai_id。手入力の名称はnullで、在庫を引けない */
   kizaiId: number | null;
+  /** 前回の申請と行を突き合わせるキー（差分の印に使う） */
+  diffKey: string;
+  /** 前回の申請にあって今回は無くなった機材か（数量0で並べる） */
+  removed: boolean;
   kizaiName: string;
   mem: string;
   mem2: string;

@@ -24,7 +24,11 @@ const Page = async ({ params }: { params: Promise<{ id: string }> }) => {
 
   // 出庫日・入庫日が未設定だと在庫を出す期間が決まらないので、在庫は空で渡す
   const range = buildStockDateRange(approval.head.shippedAt, approval.head.returnedAt);
-  const kizaiIds = approval.rows.map((row) => row.kizaiId).filter((kizaiId): kizaiId is number => kizaiId !== null);
+  // 削除された機材も数量0の行として並べるので、その在庫も引いておく
+  const kizaiIds = [
+    ...approval.rows.map((row) => row.kizaiId),
+    ...(approval.diff?.removedRows ?? []).map((row) => row.kizaiId),
+  ].filter((kizaiId): kizaiId is number => kizaiId !== null);
   const stockMap: EquipmentStockMap = range
     ? await fetchEquipmentStockMap(kizaiIds, formatIsoDate(range.start), formatIsoDate(range.end))
     : {};

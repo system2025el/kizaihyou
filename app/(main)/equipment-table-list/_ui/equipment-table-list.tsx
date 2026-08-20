@@ -31,8 +31,10 @@ import NextLink from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
+import { fetchEquipmentTableHistory } from '@/app/_lib/equipment-table/funcs';
 import { copyEquipmentTable, fetchEquipmentTableList } from '@/app/_lib/equipment-table-list/funcs';
-import { EquipmentTableListRow } from '@/app/_lib/equipment-table-list/types';
+import { EquipmentTableHistoryEntry, EquipmentTableListRow } from '@/app/_lib/equipment-table-list/types';
+import { useAutoRefresh } from '@/app/_lib/hooks/use-auto-refresh';
 
 /**
  * 承認済・申請中の行に出す「その時点の内容」へのリンク。
@@ -59,23 +61,47 @@ const EquipmentTableList = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [historyTarget, setHistoryTarget] = useState<EquipmentTableListRow | null>(null);
+  // 履歴は一覧では先読みせず、ダイアログを開いたときにその機材表の分だけ取る
+  const [history, setHistory] = useState<EquipmentTableHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [query, setQuery] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  // silent=trueは自動更新用。スピナーを出さず、失敗しても画面に出さない（次の周期で取り直せる）
+  const load = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError('');
+    }
     try {
       setRows(await fetchEquipmentTableList());
     } catch {
-      setError('機材表の取得に失敗しました。');
+      if (!silent) setError('機材表の取得に失敗しました。');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const refresh = useCallback(() => {
+    load(true);
+  }, [load]);
+  useAutoRefresh(refresh);
+
+  const openHistory = async (row: EquipmentTableListRow) => {
+    setHistoryTarget(row);
+    setHistory([]);
+    setHistoryLoading(true);
+    try {
+      setHistory(await fetchEquipmentTableHistory(row.id));
+    } catch {
+      setError('操作履歴の取得に失敗しました。');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const filteredRows = query.trim() ? rows.filter((row) => matchesQuery(row, query.trim())) : rows;
 
@@ -141,6 +167,7 @@ const EquipmentTableList = () => {
               <TableCell>入庫日</TableCell>
               <TableCell>状態ステータス</TableCell>
               <TableCell>受注部担当者名</TableCell>
+              <TableCell>機材管理の受注No.</TableCell>
               <TableCell align="center">承認・申請内容</TableCell>
               <TableCell align="center">履歴</TableCell>
               <TableCell align="center">コピーして新規作成</TableCell>
@@ -149,14 +176,14 @@ const EquipmentTableList = () => {
           <TableBody>
             {loading && (
               <TableRow>
-                <TableCell colSpan={13} align="center">
+                <TableCell colSpan={14} align="center">
                   <CircularProgress size={24} />
                 </TableCell>
               </TableRow>
             )}
             {!loading && filteredRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={13} align="center">
+                <TableCell colSpan={14} align="center">
                   該当する機材表がありません
                 </TableCell>
               </TableRow>
@@ -179,6 +206,18 @@ const EquipmentTableList = () => {
                   <Chip label={row.status} size="small" color={row.statusColor} />
                 </TableCell>
                 <TableCell>{row.salesStaffName}</TableCell>
+                <TableCell>
+                  {row.juchuLinked ? (
+                    row.juchuHeadId
+                  ) : row.status === '承認済' ? (
+                    // 承認済なのに連携できていない＝承認画面から連携をやり直す必要がある
+                    <Typography variant="body2" color="error">
+                      未連携{row.juchuHeadId ? `（伝票 ${row.juchuHeadId}・明細なし）` : ''}
+                    </Typography>
+                  ) : (
+                    '-'
+                  )}
+                </TableCell>
                 <TableCell align="center">
                   {snapshotLinkLabel(row) && (
                     <IconButton
@@ -193,7 +232,7 @@ const EquipmentTableList = () => {
                   )}
                 </TableCell>
                 <TableCell align="center">
-                  <IconButton size="small" onClick={() => setHistoryTarget(row)} title="履歴を見る">
+                  <IconButton size="small" onClick={() => openHistory(row)} title="履歴を見る">
                     <HistoryIcon fontSize="small" />
                   </IconButton>
                 </TableCell>
@@ -231,14 +270,21 @@ const EquipmentTableList = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {historyTarget.history.length === 0 && (
+                  {historyLoading && (
+                    <TableRow>
+                      <TableCell colSpan={5} align="center">
+                        <CircularProgress size={24} />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!historyLoading && history.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} align="center">
                         履歴はありません
                       </TableCell>
                     </TableRow>
                   )}
-                  {historyTarget.history.map((entry, index) => (
+                  {history.map((entry, index) => (
                     <TableRow key={`${entry.at}-${entry.action}-${index}`}>
                       <TableCell>{entry.at}</TableCell>
                       <TableCell>{entry.user}</TableCell>

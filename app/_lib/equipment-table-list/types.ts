@@ -11,6 +11,27 @@ export const KIZAIHYOU_STS: Record<EquipmentTableStatus, number> = {
   取下げ: 5,
 };
 
+/**
+ * t_kizaihyou_his.act_cod。DBの値と一致させること。
+ * act_namは表示用の文字列（'申請（受注部担当者：◯◯）'など）で判定に使えないため、
+ * 操作の種類はこのコードで判別する。
+ */
+export const KIZAIHYOU_ACT = {
+  /** 旧データ（この列を入れる前の履歴） */
+  不明: 0,
+  新規作成: 1,
+  保存: 2,
+  申請: 3,
+  承認: 4,
+  差戻し: 5,
+  取り下げ: 6,
+  コメント: 7,
+  /** kikikanへの連携が成功（memに受注番号と明細件数） */
+  連携: 8,
+  /** kikikanへの連携が失敗（memに理由）。承認自体は成立している */
+  連携失敗: 9,
+} as const;
+
 /** m_kizaihyou_sts.chip_colorが取りうる値（MUIのChip color） */
 export type EquipmentTableStatusColor = 'default' | 'info' | 'error' | 'success' | 'warning';
 
@@ -56,13 +77,16 @@ export type EquipmentTableListRow = {
   requesterName: string;
   /** 申請先の受注部担当者のuser_id。この誰か1人が承認すれば承認済になる */
   tantoUserIds: string[];
+  /** kikikanに作った受注番号。未連携ならnull */
+  juchuHeadId: number | null;
+  /** kikikanへの連携が最後まで済んでいるか（機材明細まで作られたか） */
+  juchuLinked: boolean;
   /**
    * 申請時点のスナップショットを持つ操作履歴のhis_id。
    * 承認済ならこれが「承認された内容」、申請中なら「申請した内容」。
    * 申請していない・スナップショットが無い場合はnull。
    */
   shinseiHisId: number | null;
-  history: EquipmentTableHistoryEntry[];
 };
 
 /** 機材表画面が扱うヘッダ情報 */

@@ -22,6 +22,15 @@ export const formatDateTime = (value: string | null) => {
 };
 
 /**
+ * 今日の日付をJSTの「YYYY-MM-DD」で返す関数。
+ * DBに入れる日付に使う。Vercel上の実行環境はUTCなので、
+ * ローカル時刻から作ると日付がずれる（sv-SEロケールはYYYY-MM-DD形式になる）。
+ *
+ * @returns YYYY-MM-DD
+ */
+export const todayInJst = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo' }).format(new Date());
+
+/**
  * date型（YYYY-MM-DD）を画面表示用の「YYYY/MM/DD」に整形する関数。
  * 日付のみの値なのでタイムゾーン変換はしない。
  *

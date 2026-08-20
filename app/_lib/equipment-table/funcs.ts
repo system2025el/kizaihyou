@@ -17,9 +17,16 @@ import {
   selectKizaihyouHis,
   selectKizaihyouHisList,
   selectLatestKizaihyouSnapshot,
+  selectPreviousKizaihyouRequest,
 } from '../db/tables/t-kizaihyou-his';
-import { EquipmentTableHead, EquipmentTableHistoryEntry, EquipmentTableStatus } from '../equipment-table-list/types';
+import {
+  EquipmentTableHead,
+  EquipmentTableHistoryEntry,
+  EquipmentTableStatus,
+  KIZAIHYOU_ACT,
+} from '../equipment-table-list/types';
 import { formatDateTime } from '../format';
+import { buildEquipmentTableDiff, EquipmentTableDiff, hasDiff } from './diff';
 import { buildKizaihyouExcel, buildKizaihyouExcelFileName } from './excel';
 import { buildKizaihyouPdf, buildKizaihyouPdfFileName } from './pdf';
 import { BumonOption, EquipmentColumn, EquipmentRow, EquipmentTableSnapshot, KizaiOption } from './types';
@@ -32,6 +39,10 @@ export type EquipmentTableDetail = {
   tantoUserIds: string[];
   /** 現在の申請にあたる操作履歴。未申請ならnull */
   shinseiHisId: number | null;
+  /** kikikanに作った受注番号。未連携ならnull */
+  juchuHeadId: number | null;
+  /** kikikanの受注機材ヘッダー。機材明細まで作られていればnull以外 */
+  juchuKizaiHeadId: number | null;
   head: EquipmentTableHead;
   columns: EquipmentColumn[];
   rows: EquipmentRow[];
@@ -74,6 +85,8 @@ export const fetchEquipmentTable = async (kizaihyouId: number): Promise<Equipmen
       .sort((a, b) => a.dsp_ord_num - b.dsp_ord_num)
       .map((tanto) => tanto.user_id),
     shinseiHisId: head.shinsei_his_id,
+    juchuHeadId: head.juchu_head_id,
+    juchuKizaiHeadId: head.juchu_kizai_head_id,
     head: {
       eventName: head.koen_nam,
       place: head.basho_nam ?? '',
@@ -147,11 +160,15 @@ export const createEquipmentTable = async (
 
   await saveKizaihyouContent(data.kizaihyou_id, toHeadInput(head), toContentInput(columns, rows), user.userNam);
 
-  const { error: hisError } = await insertKizaihyouHis(data.kizaihyou_id, '新規作成', user.userId, user.userNam, null, {
-    head,
-    columns,
-    rows,
-  });
+  const { error: hisError } = await insertKizaihyouHis(
+    data.kizaihyou_id,
+    KIZAIHYOU_ACT.新規作成,
+    '新規作成',
+    user.userId,
+    user.userNam,
+    null,
+    { head, columns, rows }
+  );
   if (hisError) throw new Error(`[createEquipmentTable] 操作履歴の登録に失敗しました: ${hisError.message}`);
 
   return data.kizaihyou_id;
@@ -220,7 +237,15 @@ export const saveEquipmentTable = async (
   const latestSnapshot = latest?.snapshot as EquipmentTableSnapshot | null | undefined;
   if (latestSnapshot && normalizeSnapshot(latestSnapshot) === normalizeSnapshot(snapshot)) return;
 
-  const { error: hisError } = await insertKizaihyouHis(kizaihyouId, '保存', user.userId, user.userNam, null, snapshot);
+  const { error: hisError } = await insertKizaihyouHis(
+    kizaihyouId,
+    KIZAIHYOU_ACT.保存,
+    '保存',
+    user.userId,
+    user.userNam,
+    null,
+    snapshot
+  );
   if (hisError) throw new Error(`[saveEquipmentTable] 操作履歴の登録に失敗しました: ${hisError.message}`);
 };
 
@@ -306,7 +331,14 @@ export const addEquipmentTableComment = async (
 ): Promise<EquipmentTableHistoryEntry[]> => {
   const user = await requireCurrentUser();
 
-  const { error } = await insertKizaihyouHis(kizaihyouId, 'コメント', user.userId, user.userNam, comment);
+  const { error } = await insertKizaihyouHis(
+    kizaihyouId,
+    KIZAIHYOU_ACT.コメント,
+    'コメント',
+    user.userId,
+    user.userNam,
+    comment
+  );
   if (error) throw new Error(`[addEquipmentTableComment] コメントの登録に失敗しました: ${error.message}`);
 
   return fetchEquipmentTableHistory(kizaihyouId);
@@ -372,6 +404,15 @@ export type EquipmentTableApproval = {
   editedAfterRequest: boolean;
   /** ログイン中のユーザーが申請先の受注部担当者か（承認・差戻しができるか） */
   canApprove: boolean;
+  /** kikikanに作った受注番号。未連携ならnull */
+  juchuHeadId: number | null;
+  /** kikikanへの連携が最後まで済んでいるか（機材明細まで作られたか） */
+  juchuLinked: boolean;
+  /**
+   * ひとつ前の申請からの差分。再申請のときだけ入る。
+   * 初回の申請や、差分が無い場合はnull。
+   */
+  diff: EquipmentTableDiff | null;
 };
 
 /**
@@ -396,6 +437,8 @@ export const fetchEquipmentTableForApproval = async (kizaihyouId: number): Promi
     cod: detail.cod,
     status: detail.status,
     canApprove: detail.tantoUserIds.includes(user.userId),
+    juchuHeadId: detail.juchuHeadId,
+    juchuLinked: detail.juchuKizaiHeadId !== null,
   };
   const request = detail.shinseiHisId === null ? null : await fetchEquipmentTableSnapshot(detail.shinseiHisId);
   if (!request) {
@@ -406,6 +449,7 @@ export const fetchEquipmentTableForApproval = async (kizaihyouId: number): Promi
       rows: detail.rows,
       fromSnapshot: false,
       hisId: null,
+      diff: null,
       requestedAt: '',
       requesterName: '',
       requestComment: '',
@@ -413,9 +457,27 @@ export const fetchEquipmentTableForApproval = async (kizaihyouId: number): Promi
     };
   }
 
+  // ひとつ前の申請と比べて差分を出す（＝再申請のときだけ出る）
+  const { data: previous, error: previousError } = await selectPreviousKizaihyouRequest(
+    kizaihyouId,
+    KIZAIHYOU_ACT.申請,
+    request.hisId
+  );
+  if (previousError)
+    throw new Error(`[fetchEquipmentTableForApproval] 前回の申請の取得に失敗しました: ${previousError.message}`);
+
+  const diff = previous?.snapshot
+    ? buildEquipmentTableDiff(
+        previous.snapshot as unknown as EquipmentTableSnapshot,
+        request.snapshot,
+        formatDateTime(previous.act_dat)
+      )
+    : null;
+
   const current: EquipmentTableSnapshot = { head: detail.head, columns: detail.columns, rows: detail.rows };
   return {
     ...base,
+    diff: diff && hasDiff(diff) ? diff : null,
     head: request.snapshot.head,
     columns: request.snapshot.columns,
     rows: request.snapshot.rows,
@@ -454,6 +516,7 @@ export const createEquipmentTableFromSnapshot = async (hisId: number): Promise<n
 
   const { error: hisError } = await insertKizaihyouHis(
     data.kizaihyou_id,
+    KIZAIHYOU_ACT.新規作成,
     `${source.cod}の${source.at}時点から流用して新規作成`,
     user.userId,
     user.userNam,

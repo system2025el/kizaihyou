@@ -17,10 +17,11 @@ import {
   Typography,
 } from '@mui/material';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { fetchApprovalRequestList } from '@/app/_lib/equipment-table-list/funcs';
 import { EquipmentTableListRow } from '@/app/_lib/equipment-table-list/types';
+import { useAutoRefresh } from '@/app/_lib/hooks/use-auto-refresh';
 
 const matchesQuery = (row: EquipmentTableListRow, query: string) => {
   const target = [row.cod, row.eventName, row.place, row.clientName, row.requesterName, row.salesStaffName]
@@ -36,18 +37,25 @@ const EquipmentTableRequest = () => {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setRows(await fetchApprovalRequestList());
-      } catch {
-        setError('申請中の機材表の取得に失敗しました。');
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  // silent=trueは自動更新用。失敗しても画面に出さない（次の周期で取り直せる）
+  const load = useCallback(async (silent = false) => {
+    try {
+      setRows(await fetchApprovalRequestList());
+    } catch {
+      if (!silent) setError('申請中の機材表の取得に失敗しました。');
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const refresh = useCallback(() => {
+    load(true);
+  }, [load]);
+  useAutoRefresh(refresh);
 
   const filteredRows = query.trim() ? rows.filter((row) => matchesQuery(row, query.trim())) : rows;
 

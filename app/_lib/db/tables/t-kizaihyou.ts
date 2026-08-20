@@ -9,7 +9,7 @@ import { createClient } from '../supabase-server';
 const HEAD_COLUMNS = `
   kizaihyou_id, kizaihyou_cod, koen_nam, basho_nam, kokyaku_nam,
   shukko_dat, nyuko_dat, sts_cod, tanto_nam,
-  shinsei_nam, shinsei_his_id, mem, add_dat, upd_dat,
+  shinsei_nam, shinsei_his_id, juchu_head_id, juchu_kizai_head_id, mem, add_dat, upd_dat,
   m_kizaihyou_sts ( sts_nam, chip_color ),
   t_kizaihyou_tanto ( user_id, user_nam, dsp_ord_num )
 `;
@@ -166,6 +166,33 @@ export const updateKizaihyouSts = async (kizaihyouId: number, stsCod: number, up
   }
 };
 
+/**
+ * kikikanへ作った受注との紐付けを記録する関数。
+ * 二重作成の防止と、在庫の足し戻しの両方でこの値を使う。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ * @param juchuHeadId kikikanの受注ヘッダーID
+ * @param juchuKizaiHeadId kikikanの受注機材ヘッダーID（伝票だけ作った段階ではnull）
+ * @param updUser 更新者名
+ */
+export const updateKizaihyouJuchuLink = async (
+  kizaihyouId: number,
+  juchuHeadId: number,
+  juchuKizaiHeadId: number | null,
+  updUser: string
+) => {
+  const supabase = await createClient();
+  try {
+    return await supabase
+      .schema(SCHEMA)
+      .from('t_kizaihyou')
+      .update({ juchu_head_id: juchuHeadId, juchu_kizai_head_id: juchuKizaiHeadId, upd_user: updUser })
+      .eq('kizaihyou_id', kizaihyouId);
+  } catch (e) {
+    throw new Error('[updateKizaihyouJuchuLink] DBエラー:', { cause: e });
+  }
+};
+
 /** 申請時に受け取る値 */
 export type KizaihyouRequestInput = {
   kizaihyouId: number;
@@ -178,7 +205,9 @@ export type KizaihyouRequestInput = {
   /** 申請者（依頼者）名（表示用スナップショット） */
   shinseiNam: string;
   shinseiUserId: string;
-  /** 履歴に残す操作内容 */
+  /** 履歴に残す操作種別（KIZAIHYOU_ACT.申請） */
+  actCod: number;
+  /** 履歴に残す操作内容の表示用文字列 */
   actNam: string;
   /** 申請コメント */
   mem: string | null;
@@ -206,11 +235,12 @@ export const requestKizaihyou = async (input: KizaihyouRequestInput) => {
     await connection.query('BEGIN');
 
     const his = await connection.query<{ his_id: string }>(
-      `INSERT INTO ${SCHEMA}.t_kizaihyou_his (kizaihyou_id, act_nam, user_id, user_nam, mem, snapshot)
-            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+      `INSERT INTO ${SCHEMA}.t_kizaihyou_his (kizaihyou_id, act_cod, act_nam, user_id, user_nam, mem, snapshot)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
          RETURNING his_id`,
       [
         input.kizaihyouId,
+        input.actCod,
         input.actNam,
         input.shinseiUserId,
         input.shinseiNam,

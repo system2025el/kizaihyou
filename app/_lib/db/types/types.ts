@@ -75,6 +75,8 @@ export type Database = {
           basho_nam: string | null;
           copy_from_id: number | null;
           del_flg: number;
+          juchu_head_id: number | null;
+          juchu_kizai_head_id: number | null;
           kizaihyou_cod: string;
           kizaihyou_id: number;
           koen_nam: string;
@@ -96,6 +98,8 @@ export type Database = {
           basho_nam?: string | null;
           copy_from_id?: number | null;
           del_flg?: number;
+          juchu_head_id?: number | null;
+          juchu_kizai_head_id?: number | null;
           kizaihyou_cod?: string;
           kizaihyou_id?: never;
           koen_nam: string;
@@ -117,6 +121,8 @@ export type Database = {
           basho_nam?: string | null;
           copy_from_id?: number | null;
           del_flg?: number;
+          juchu_head_id?: number | null;
+          juchu_kizai_head_id?: number | null;
           kizaihyou_cod?: string;
           kizaihyou_id?: never;
           koen_nam?: string;
@@ -194,6 +200,7 @@ export type Database = {
       };
       t_kizaihyou_his: {
         Row: {
+          act_cod: number;
           act_dat: string;
           act_nam: string;
           his_id: number;
@@ -205,6 +212,7 @@ export type Database = {
           user_nam: string;
         };
         Insert: {
+          act_cod?: number;
           act_dat?: string;
           act_nam: string;
           his_id?: never;
@@ -216,6 +224,7 @@ export type Database = {
           user_nam?: string;
         };
         Update: {
+          act_cod?: number;
           act_dat?: string;
           act_nam?: string;
           his_id?: never;
