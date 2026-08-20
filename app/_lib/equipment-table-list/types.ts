@@ -54,6 +54,8 @@ export type EquipmentTableListRow = {
   salesStaffName: string;
   /** 依頼者名（申請した人）。未申請なら空文字 */
   requesterName: string;
+  /** 申請先の受注部担当者のuser_id。この誰か1人が承認すれば承認済になる */
+  tantoUserIds: string[];
   /**
    * 申請時点のスナップショットを持つ操作履歴のhis_id。
    * 承認済ならこれが「承認された内容」、申請中なら「申請した内容」。

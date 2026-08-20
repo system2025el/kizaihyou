@@ -19,7 +19,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-import { fetchEquipmentTableList } from '@/app/_lib/equipment-table-list/funcs';
+import { fetchApprovalRequestList } from '@/app/_lib/equipment-table-list/funcs';
 import { EquipmentTableListRow } from '@/app/_lib/equipment-table-list/types';
 
 const matchesQuery = (row: EquipmentTableListRow, query: string) => {
@@ -39,8 +39,7 @@ const EquipmentTableRequest = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const list = await fetchEquipmentTableList();
-        setRows(list.filter((row) => row.status === '申請中'));
+        setRows(await fetchApprovalRequestList());
       } catch {
         setError('申請中の機材表の取得に失敗しました。');
       } finally {
@@ -55,7 +54,12 @@ const EquipmentTableRequest = () => {
   return (
     <Box p={2}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} gap={2}>
-        <Typography variant="h5">機材表申請依頼</Typography>
+        <Box>
+          <Typography variant="h5">機材表申請依頼</Typography>
+          <Typography variant="body2" color="text.secondary">
+            自分が申請先に指定されている機材表だけを表示しています。
+          </Typography>
+        </Box>
         <TextField
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -106,7 +110,9 @@ const EquipmentTableRequest = () => {
             {!loading && filteredRows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={9} align="center">
-                  {rows.length === 0 ? '申請中の機材表はありません' : '検索条件に一致する機材表はありません'}
+                  {rows.length === 0
+                    ? '自分あてに申請されている機材表はありません'
+                    : '検索条件に一致する機材表はありません'}
                 </TableCell>
               </TableRow>
             )}

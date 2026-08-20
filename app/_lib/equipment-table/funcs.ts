@@ -370,6 +370,8 @@ export type EquipmentTableApproval = {
   requestComment: string;
   /** 申請後に機材表が編集されているか（承認者に注意を出すため） */
   editedAfterRequest: boolean;
+  /** ログイン中のユーザーが申請先の受注部担当者か（承認・差戻しができるか） */
+  canApprove: boolean;
 };
 
 /**
@@ -383,10 +385,18 @@ export type EquipmentTableApproval = {
  * @returns 承認画面が表示する内容（機材表が無ければnull）
  */
 export const fetchEquipmentTableForApproval = async (kizaihyouId: number): Promise<EquipmentTableApproval | null> => {
+  const user = await requireCurrentUser();
+
   const detail = await fetchEquipmentTable(kizaihyouId);
   if (!detail) return null;
 
-  const base = { id: detail.id, cod: detail.cod, status: detail.status };
+  // 承認・差戻しは申請先に指定された受注部担当者だけができる（サーバー側でも弾く）
+  const base = {
+    id: detail.id,
+    cod: detail.cod,
+    status: detail.status,
+    canApprove: detail.tantoUserIds.includes(user.userId),
+  };
   const request = detail.shinseiHisId === null ? null : await fetchEquipmentTableSnapshot(detail.shinseiHisId);
   if (!request) {
     return {

@@ -3,7 +3,13 @@
 import { requireCurrentUser } from '../auth/funcs';
 import { hasPermission, PERMISSION } from '../auth/permission';
 import { selectUserList } from '../db/tables/m-user';
-import { copyKizaihyou, requestKizaihyou, selectKizaihyouList, updateKizaihyouSts } from '../db/tables/t-kizaihyou';
+import {
+  copyKizaihyou,
+  requestKizaihyou,
+  selectKizaihyouHead,
+  selectKizaihyouList,
+  updateKizaihyouSts,
+} from '../db/tables/t-kizaihyou';
 import { insertKizaihyouHis, selectKizaihyouHisList } from '../db/tables/t-kizaihyou-his';
 import { fetchEquipmentTable } from '../equipment-table/funcs';
 import { formatDate, formatDateTime } from '../format';
@@ -70,6 +76,9 @@ export const fetchEquipmentTableList = async (): Promise<EquipmentTableListRow[]
       statusColor: toStatusColor(head.m_kizaihyou_sts?.chip_color),
       salesStaffName: head.tanto_nam,
       requesterName: head.shinsei_nam,
+      tantoUserIds: [...(head.t_kizaihyou_tanto ?? [])]
+        .sort((a, b) => a.dsp_ord_num - b.dsp_ord_num)
+        .map((tanto) => tanto.user_id),
       shinseiHisId: shinseiHis?.hasSnapshot ? shinseiHis.hisId : null,
       history,
     };
@@ -192,19 +201,52 @@ export const withdrawEquipmentTable = async (kizaihyouId: number, comment: strin
 };
 
 /**
- * 機材表の申請を承認する関数
+ * 機材表申請依頼一覧に出す機材表を取得する関数。
+ * 申請中のうち、**ログイン中のユーザーが申請先に含まれるものだけ**を返す。
+ *
+ * @returns 自分あてに申請されている機材表
+ */
+export const fetchApprovalRequestList = async (): Promise<EquipmentTableListRow[]> => {
+  const user = await requireCurrentUser();
+  const rows = await fetchEquipmentTableList();
+  return rows.filter((row) => row.status === '申請中' && row.tantoUserIds.includes(user.userId));
+};
+
+/**
+ * 承認・差戻しができるユーザーかを確かめる関数。
+ *
+ * 申請先には複数の受注部担当者を指定でき、そのうち1人が承認すれば承認済になる。
+ * 逆に、申請先に入っていない人は承認も差戻しもできない。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ */
+const requireJuchuTanto = async (kizaihyouId: number) => {
+  const user = await requireCurrentUser();
+
+  const { data, error } = await selectKizaihyouHead(kizaihyouId);
+  if (error) throw new Error(`[requireJuchuTanto] 機材表の取得に失敗しました: ${error.message}`);
+  if (!data) throw new Error('[requireJuchuTanto] 機材表が見つかりません');
+
+  const isTanto = (data.t_kizaihyou_tanto ?? []).some((tanto) => tanto.user_id === user.userId);
+  if (!isTanto) throw new Error('[requireJuchuTanto] 承認・差戻しができるのは申請先の受注部担当者だけです');
+};
+
+/**
+ * 機材表の申請を承認する関数（申請先の受注部担当者のみ）
  * @param kizaihyouId 対象のkizaihyou_id
  * @param comment 承認コメント
  */
 export const approveEquipmentTable = async (kizaihyouId: number, comment: string) => {
+  await requireJuchuTanto(kizaihyouId);
   await changeStatus(kizaihyouId, '承認済', '承認', comment || null);
 };
 
 /**
- * 機材表の申請を差し戻す関数
+ * 機材表の申請を差し戻す関数（申請先の受注部担当者のみ）
  * @param kizaihyouId 対象のkizaihyou_id
  * @param comment 差戻しコメント
  */
 export const rejectEquipmentTable = async (kizaihyouId: number, comment: string) => {
+  await requireJuchuTanto(kizaihyouId);
   await changeStatus(kizaihyouId, '差戻し', '差戻し', comment || null);
 };

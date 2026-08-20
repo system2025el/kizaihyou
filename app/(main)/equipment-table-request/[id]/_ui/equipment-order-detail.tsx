@@ -169,10 +169,20 @@ const EquipmentOrderDetail = ({ approval, stockMap, history }: Props) => {
           <Button startIcon={<ForumIcon />} onClick={() => setTimelineOpen((prev) => !prev)}>
             タイムライン
           </Button>
-          <Button variant="contained" color="success" onClick={() => openAction('承認')} disabled={busy}>
+          <Button
+            variant="contained"
+            color="success"
+            onClick={() => openAction('承認')}
+            disabled={busy || !approval.canApprove}
+          >
             承認
           </Button>
-          <Button variant="outlined" color="error" onClick={() => openAction('差戻し')} disabled={busy}>
+          <Button
+            variant="outlined"
+            color="error"
+            onClick={() => openAction('差戻し')}
+            disabled={busy || !approval.canApprove}
+          >
             差し戻し
           </Button>
         </Box>
@@ -181,6 +191,12 @@ const EquipmentOrderDetail = ({ approval, stockMap, history }: Props) => {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
+        </Alert>
+      )}
+
+      {!approval.canApprove && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          この機材表の申請先に指定されていないため、承認・差戻しはできません（内容の閲覧とコメントはできます）。
         </Alert>
       )}
 
