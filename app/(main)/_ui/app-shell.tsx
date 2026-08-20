@@ -43,7 +43,7 @@ const AppShell = ({ children }: { children: React.ReactNode }) => {
             <MenuIcon />
           </IconButton>
           <Typography variant="h6" noWrap component="div">
-            器材表
+            機材表
           </Typography>
         </Toolbar>
       </AppBar>

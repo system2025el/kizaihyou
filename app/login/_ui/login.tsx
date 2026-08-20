@@ -39,7 +39,7 @@ const Login = () => {
   return (
     <form onSubmit={handleSubmit(onSubmit)}>
       <Stack direction="column" spacing={4} justifyContent="center" alignItems="center" width="100%" height="100vh">
-        <Typography variant="h5">器材表 ログイン</Typography>
+        <Typography variant="h5">機材表 ログイン</Typography>
         <Typography variant="caption" color="error">
           {error}
         </Typography>

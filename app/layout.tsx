@@ -9,8 +9,8 @@ import ThemeProvider from './_ui/theme-provider';
 
 export const metadata: Metadata = {
   title: {
-    template: '%s - 器材表',
-    default: '器材表',
+    template: '%s - 機材表',
+    default: '機材表',
   },
   description: '',
 };
