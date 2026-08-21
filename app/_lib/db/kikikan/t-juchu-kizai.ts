@@ -22,6 +22,11 @@ export type KikikanJuchuKizaiRow = {
   planKizaiQty: number;
   /** 予備数（機材表のSPARE） */
   planYobiQty: number;
+  /**
+   * 機材名のインデント段数（0か1）。1なら機材明細画面で「 ┗ 」が前に付く。
+   * 作業伝票（t_nyushuko_den）にも同じ値を入れる（kikikanの既存データもそう揃っている）。
+   */
+  indentNum: number;
   mem: string | null;
 };
 
@@ -152,6 +157,7 @@ export const insertKikikanJuchuKizai = async (input: KikikanJuchuKizaiInput): Pr
         const yobiQtys = input.rows.map((row) => row.planYobiQty);
         const mems = input.rows.map((row) => row.mem);
         const planQtys = input.rows.map((row) => row.planKizaiQty + row.planYobiQty);
+        const indentNums = input.rows.map((row) => row.indentNum);
 
         // 4. 機材明細。出庫元はYARD固定なのでshozoku_idはYARD
         await connection.query(
@@ -160,9 +166,9 @@ export const insertKikikanJuchuKizai = async (input: KikikanJuchuKizaiInput): Pr
                    plan_kizai_qty, plan_yobi_qty, mem, mem2, keep_qty, shozoku_id, dsp_ord_num, indent_num,
                    add_dat, add_user)
            SELECT $1, $2, t.meisai_id, t.kizai_id, t.tanka, t.kizai_qty, t.yobi_qty, t.mem, NULL, NULL,
-                  $3, t.meisai_id, 0, now(), $4
-             FROM unnest($5::int[], $6::int[], $7::numeric[], $8::int[], $9::int[], $10::text[])
-                  AS t(meisai_id, kizai_id, tanka, kizai_qty, yobi_qty, mem)`,
+                  $3, t.meisai_id, t.indent, now(), $4
+             FROM unnest($5::int[], $6::int[], $7::numeric[], $8::int[], $9::int[], $10::text[], $11::int[])
+                  AS t(meisai_id, kizai_id, tanka, kizai_qty, yobi_qty, mem, indent)`,
           [
             input.juchuHeadId,
             juchuKizaiHeadId,
@@ -174,6 +180,7 @@ export const insertKikikanJuchuKizai = async (input: KikikanJuchuKizaiInput): Pr
             kizaiQtys,
             yobiQtys,
             mems,
+            indentNums,
           ]
         );
 
@@ -184,8 +191,9 @@ export const insertKikikanJuchuKizai = async (input: KikikanJuchuKizaiInput): Pr
                    sagyo_id, kizai_id, plan_qty, dsp_ord_num, indent_num, add_dat, add_user)
            SELECT $1, $2, t.meisai_id, k.sagyo_kbn_id,
                   CASE WHEN k.is_shuko THEN ${JST_MIDNIGHT('$6')} ELSE ${JST_MIDNIGHT('$7')} END,
-                  $3, t.kizai_id, t.plan_qty, t.meisai_id, 0, now(), $4
-             FROM unnest($8::int[], $9::int[], $10::int[]) AS t(meisai_id, kizai_id, plan_qty)
+                  $3, t.kizai_id, t.plan_qty, t.meisai_id, t.indent, now(), $4
+             FROM unnest($8::int[], $9::int[], $10::int[], $13::int[])
+                  AS t(meisai_id, kizai_id, plan_qty, indent)
              CROSS JOIN (VALUES ($5::int, true), ($11::int, true), ($12::int, false))
                   AS k(sagyo_kbn_id, is_shuko)`,
           [
@@ -201,6 +209,7 @@ export const insertKikikanJuchuKizai = async (input: KikikanJuchuKizaiInput): Pr
             planQtys,
             KIKIKAN_SAGYO_KBN_ID.shukoConfirmation,
             KIKIKAN_SAGYO_KBN_ID.nyukoCount,
+            indentNums,
           ]
         );
 

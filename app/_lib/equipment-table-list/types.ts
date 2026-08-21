@@ -1,6 +1,6 @@
 import { EquipmentColumn, EquipmentRow } from '@/app/_lib/equipment-table/types';
 
-export type EquipmentTableStatus = '作成中' | '申請中' | '差戻し' | '承認済' | '取下げ';
+export type EquipmentTableStatus = '作成中' | '申請中' | '差戻し' | '承認済' | '取下げ' | '完了';
 
 /** m_kizaihyou_sts.sts_cod。DBのマスタと一致させること */
 export const KIZAIHYOU_STS: Record<EquipmentTableStatus, number> = {
@@ -9,6 +9,7 @@ export const KIZAIHYOU_STS: Record<EquipmentTableStatus, number> = {
   差戻し: 3,
   承認済: 4,
   取下げ: 5,
+  完了: 6,
 };
 
 /**
@@ -30,10 +31,15 @@ export const KIZAIHYOU_ACT = {
   連携: 8,
   /** kikikanへの連携が失敗（memに理由）。承認自体は成立している */
   連携失敗: 9,
+  完了: 10,
+  完了解除: 11,
+  /** 論理削除（del_flg = 1）。ステータスは変えない */
+  削除: 12,
+  復元: 13,
 } as const;
 
 /** m_kizaihyou_sts.chip_colorが取りうる値（MUIのChip color） */
-export type EquipmentTableStatusColor = 'default' | 'info' | 'error' | 'success' | 'warning';
+export type EquipmentTableStatusColor = 'default' | 'info' | 'error' | 'success' | 'warning' | 'secondary';
 
 /** 申請時に選ぶ受注部担当者の候補（m_userのうち受注部担当者権限を持つ人） */
 export type JuchuTantoOption = {
@@ -81,6 +87,8 @@ export type EquipmentTableListRow = {
   juchuHeadId: number | null;
   /** kikikanへの連携が最後まで済んでいるか（機材明細まで作られたか） */
   juchuLinked: boolean;
+  /** 削除済み（del_flg = 1）か。一覧は「削除済も表示」にしたときだけ出す */
+  deleted: boolean;
   /**
    * 申請時点のスナップショットを持つ操作履歴のhis_id。
    * 承認済ならこれが「承認された内容」、申請中なら「申請した内容」。

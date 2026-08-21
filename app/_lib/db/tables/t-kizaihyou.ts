@@ -9,24 +9,21 @@ import { createClient } from '../supabase-server';
 const HEAD_COLUMNS = `
   kizaihyou_id, kizaihyou_cod, koen_nam, basho_nam, kokyaku_nam,
   shukko_dat, nyuko_dat, sts_cod, tanto_nam,
-  shinsei_nam, shinsei_his_id, juchu_head_id, juchu_kizai_head_id, mem, add_dat, upd_dat,
+  shinsei_nam, shinsei_his_id, juchu_head_id, juchu_kizai_head_id, mem, del_flg, add_dat, upd_dat,
   m_kizaihyou_sts ( sts_nam, chip_color ),
   t_kizaihyou_tanto ( user_id, user_nam, dsp_ord_num )
 `;
 
 /**
- * 機材表ヘッダを一覧取得する関数（削除済みは除く）
+ * 機材表ヘッダを一覧取得する関数
+ * @param includeDeleted 削除済み（del_flg = 1）も含めるか
  * @returns 更新日時の新しい順に並んだ機材表ヘッダ
  */
-export const selectKizaihyouList = async () => {
+export const selectKizaihyouList = async (includeDeleted = false) => {
   const supabase = await createClient();
   try {
-    return await supabase
-      .schema(SCHEMA)
-      .from('t_kizaihyou')
-      .select(HEAD_COLUMNS)
-      .eq('del_flg', 0)
-      .order('upd_dat', { ascending: false });
+    const query = supabase.schema(SCHEMA).from('t_kizaihyou').select(HEAD_COLUMNS);
+    return await (includeDeleted ? query : query.eq('del_flg', 0)).order('upd_dat', { ascending: false });
   } catch (e) {
     throw new Error('[selectKizaihyouList] DBエラー:', { cause: e });
   }
@@ -82,7 +79,7 @@ export const selectKizaihyouRows = async (kizaihyouId: number) => {
     return await supabase
       .schema(SCHEMA)
       .from('t_kizaihyou_row')
-      .select('row_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, dsp_ord_num')
+      .select('row_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, indent_num, dsp_ord_num')
       .eq('kizaihyou_id', kizaihyouId)
       .order('dsp_ord_num');
   } catch (e) {
@@ -148,7 +145,30 @@ export const insertKizaihyou = async (head: KizaihyouHeadInput, addUser: string,
 };
 
 /**
- * 機材表の状態ステータスを更新する関数
+ * 機材表の論理削除フラグを更新する関数。
+ *
+ * 削除はステータス（sts_cod）ではなくこのフラグで表す。両方で持つと
+ * どちらが正か分からなくなるため。一覧は既定でdel_flg = 0だけを出す。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ * @param delFlg 1で削除、0で復元
+ * @param updUser 更新者名
+ */
+export const updateKizaihyouDelFlg = async (kizaihyouId: number, delFlg: 0 | 1, updUser: string) => {
+  const supabase = await createClient();
+  try {
+    return await supabase
+      .schema(SCHEMA)
+      .from('t_kizaihyou')
+      .update({ del_flg: delFlg, upd_user: updUser })
+      .eq('kizaihyou_id', kizaihyouId);
+  } catch (e) {
+    throw new Error('[updateKizaihyouDelFlg] DBエラー:', { cause: e });
+  }
+};
+
+/**
+ * 機材表のステータスを更新する関数
  * @param kizaihyouId 対象のkizaihyou_id
  * @param stsCod 更新後のsts_cod
  * @param updUser 更新者名
@@ -317,8 +337,8 @@ export const copyKizaihyou = async (sourceId: number, addUser: string) => {
     );
     await connection.query(
       `INSERT INTO ${SCHEMA}.t_kizaihyou_row
-              (kizaihyou_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, dsp_ord_num)
-       SELECT $2, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, dsp_ord_num
+              (kizaihyou_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, indent_num, dsp_ord_num)
+       SELECT $2, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, indent_num, dsp_ord_num
          FROM ${SCHEMA}.t_kizaihyou_row WHERE kizaihyou_id = $1`,
       [sourceId, newId]
     );
@@ -354,6 +374,8 @@ export type KizaihyouContentInput = {
     kizaiNam: string;
     mem: string;
     spareQty: number;
+    /** 機材名のインデント段数（0か1） */
+    indentNum: number;
     /** columnsと同じ並びの数量。未入力はnull */
     qty: (number | null)[];
   }[];
@@ -419,10 +441,10 @@ export const saveKizaihyouContent = async (
           (
             await connection.query<{ row_id: string; dsp_ord_num: number }>(
               `INSERT INTO ${SCHEMA}.t_kizaihyou_row
-                      (kizaihyou_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, dsp_ord_num)
-               SELECT $1, kind, kizai_id, nam, mem, spare, ord
-                 FROM unnest($2::text[], $3::int[], $4::text[], $5::text[], $6::int[], $7::int[])
-                      AS t(kind, kizai_id, nam, mem, spare, ord)
+                      (kizaihyou_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, indent_num, dsp_ord_num)
+               SELECT $1, kind, kizai_id, nam, mem, spare, indent, ord
+                 FROM unnest($2::text[], $3::int[], $4::text[], $5::text[], $6::int[], $7::int[], $8::int[])
+                      AS t(kind, kizai_id, nam, mem, spare, indent, ord)
             RETURNING row_id, dsp_ord_num`,
               [
                 kizaihyouId,
@@ -431,6 +453,7 @@ export const saveKizaihyouContent = async (
                 content.rows.map((r) => r.kizaiNam),
                 content.rows.map((r) => r.mem),
                 content.rows.map((r) => r.spareQty),
+                content.rows.map((r) => r.indentNum),
                 content.rows.map((_, i) => i + 1),
               ]
             )

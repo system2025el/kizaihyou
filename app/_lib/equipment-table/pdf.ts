@@ -6,7 +6,7 @@ import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
 
 import { EquipmentTableHead } from '../equipment-table-list/types';
 import { formatDate } from '../format';
-import { buildKizaihyouFileName, getActiveSum, getTotal, hasEquipmentRowContent } from './sheet';
+import { buildKizaihyouFileName, getActiveSum, getIndentedName, getTotal, hasEquipmentRowContent } from './sheet';
 import { EquipmentColumn, EquipmentRow } from './types';
 
 /**
@@ -198,7 +198,7 @@ export const buildKizaihyouPdf = async ({ kizaihyouCod, head, columns, rows }: K
       const active = getActiveSum(row);
       const values = [
         row.kind,
-        row.name,
+        getIndentedName(row),
         row.remark,
         total ? String(total) : '',
         active ? String(active) : '',

@@ -324,6 +324,7 @@ export type Database = {
       t_kizaihyou_row: {
         Row: {
           dsp_ord_num: number;
+          indent_num: number;
           kizai_id: number | null;
           kizai_kind: string;
           kizai_nam: string;
@@ -334,6 +335,7 @@ export type Database = {
         };
         Insert: {
           dsp_ord_num: number;
+          indent_num?: number;
           kizai_id?: number | null;
           kizai_kind?: string;
           kizai_nam?: string;
@@ -344,6 +346,7 @@ export type Database = {
         };
         Update: {
           dsp_ord_num?: number;
+          indent_num?: number;
           kizai_id?: number | null;
           kizai_kind?: string;
           kizai_nam?: string;

@@ -13,6 +13,12 @@ export type EquipmentRow = {
   name: string;
   remark: string;
   spare: string;
+  /**
+   * 機材名のインデント段数。0＝通常、1＝直前の機材とセット（「 ┗ 」を前置して表示）。
+   * kikikanのt_juchu_kizai_meisai.indent_numにそのまま渡る。
+   * 親子を連動させる仕組みは持たず、並び替えても付いてこない（見た目だけの扱い）。
+   */
+  indent: number;
   /** 列id → 数量 */
   qty: Record<string, string>;
 };

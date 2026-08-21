@@ -140,7 +140,7 @@ const buildSnapshot = async (headOverride = {}) => {
   const { data: r } = await kz
     .schema('public')
     .from('t_kizaihyou_row')
-    .select('row_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, dsp_ord_num')
+    .select('row_id, kizai_kind, kizai_id, kizai_nam, mem, spare_qty, indent_num, dsp_ord_num')
     .eq('kizaihyou_id', head.kizaihyou_id)
     .order('dsp_ord_num');
   const { data: q } = await kz
@@ -169,6 +169,7 @@ const buildSnapshot = async (headOverride = {}) => {
       name: x.kizai_nam,
       remark: x.mem ?? '',
       spare: x.spare_qty ? String(x.spare_qty) : '',
+      indent: x.indent_num ?? 0,
       qty: Object.fromEntries(q.filter((y) => y.row_id === x.row_id).map((y) => [String(y.column_id), String(y.qty)])),
     })),
   };

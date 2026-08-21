@@ -15,12 +15,16 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import DownloadIcon from '@mui/icons-material/Download';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import ForumIcon from '@mui/icons-material/Forum';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import SaveIcon from '@mui/icons-material/Save';
 import SendIcon from '@mui/icons-material/Send';
+import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
+import TaskAltIcon from '@mui/icons-material/TaskAlt';
 import UndoIcon from '@mui/icons-material/Undo';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import {
@@ -64,7 +68,10 @@ import { getActiveSum, getTotal } from '@/app/_lib/equipment-table/sheet';
 import { BumonOption, EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
 import { validateForRequest } from '@/app/_lib/equipment-table/validation';
 import {
+  completeEquipmentTable,
   copyEquipmentTable,
+  deleteEquipmentTable,
+  reopenEquipmentTable,
   requestEquipmentTable,
   withdrawEquipmentTable,
 } from '@/app/_lib/equipment-table-list/funcs';
@@ -91,6 +98,7 @@ const createRow = (): EquipmentRow => ({
   name: '',
   remark: '',
   spare: '',
+  indent: 0,
   qty: {},
 });
 
@@ -139,8 +147,15 @@ const filterKizaiOptions = createFilterOptions<KizaiOption>({
  */
 const REQUESTABLE_STATUSES: EquipmentTableStatus[] = ['作成中', '差戻し', '取下げ', '承認済'];
 
-/** 編集できないステータス（申請中は承認者が見ている内容なので触らせない） */
-const READ_ONLY_STATUSES: EquipmentTableStatus[] = ['申請中'];
+/**
+ * 編集できないステータス。
+ * 申請中は承認者が見ている内容なので触らせない。
+ * 完了は締めた案件が黙って書き換わらないよう、作成中に戻してから編集させる。
+ */
+const READ_ONLY_STATUSES: EquipmentTableStatus[] = ['申請中', '完了'];
+
+/** 完了にできるステータス（申請中は承認者が見ている最中なので不可） */
+const COMPLETABLE_STATUSES: EquipmentTableStatus[] = ['作成中', '差戻し', '承認済', '取下げ'];
 
 /**
  * 未保存の変更があるかを判定するためのスナップショット。
@@ -156,6 +171,7 @@ const toSnapshot = (head: EquipmentTableHead, columns: EquipmentColumn[], rows: 
       name: row.name,
       remark: row.remark,
       spare: row.spare,
+      indent: row.indent,
       // 列の並び替えに追随できるよう、列idではなく表示順で数量を並べる
       qty: columns.map((column) => row.qty[column.id] ?? ''),
     })),
@@ -182,7 +198,9 @@ const ColumnHeaderCell = ({ column, readOnly, onLabelChange, onRemove }: ColumnH
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.6 : 1,
-        zIndex: isDragging ? 1 : 'auto',
+        // stickyHeaderが付ける z-index: 2 を上書きしないこと。
+        // 'auto'にすると、DOM上あとに来る本体の行がヘッダーの上に描画される
+        zIndex: isDragging ? 3 : 2,
         bgcolor: 'background.paper',
       }}
     >
@@ -292,33 +310,50 @@ const EquipmentRowView = ({
         />
       </TableCell>
       <TableCell>
-        <Autocomplete
-          freeSolo
-          readOnly={readOnly}
-          size="small"
-          options={kizaiOptions}
-          filterOptions={filterKizaiOptions}
-          noOptionsText={
-            kizaiOptionsFiltered
-              ? 'この種類に該当する機材がありません（種類を空にすると全機材から選べます）'
-              : '該当する機材がありません'
-          }
-          getOptionLabel={(option) => (typeof option === 'string' ? option : option.kizaiNam)}
-          inputValue={row.name}
-          onInputChange={(_event, value, reason) => {
-            // 候補を選んだ直後のresetはonChange側で反映済みなので無視する
-            if (reason === 'reset') return;
-            onUpdateRow({ name: value, kizaiId: null });
-          }}
-          onChange={(_event, value) => {
-            if (value && typeof value !== 'string') {
-              onUpdateRow({ name: value.kizaiNam, kizaiId: value.kizaiId });
-              return;
+        <Box display="flex" alignItems="center" gap={0.5}>
+          {readOnly ? (
+            <Typography variant="body2" color="text.secondary" width={28} textAlign="center">
+              {row.indent ? '┗' : ''}
+            </Typography>
+          ) : (
+            <IconButton
+              size="small"
+              color={row.indent ? 'primary' : 'default'}
+              onClick={() => onUpdateRow({ indent: row.indent ? 0 : 1 })}
+              title={row.indent ? '上の機材とのセットを解除する' : '上の機材とセットにする（ ┗ ）'}
+            >
+              <SubdirectoryArrowRightIcon fontSize="small" />
+            </IconButton>
+          )}
+          <Autocomplete
+            sx={{ flexGrow: 1 }}
+            freeSolo
+            readOnly={readOnly}
+            size="small"
+            options={kizaiOptions}
+            filterOptions={filterKizaiOptions}
+            noOptionsText={
+              kizaiOptionsFiltered
+                ? 'この種類に該当する機材がありません（種類を空にすると全機材から選べます）'
+                : '該当する機材がありません'
             }
-            onUpdateRow({ name: value ?? '', kizaiId: null });
-          }}
-          renderInput={(params) => <TextField {...params} variant="standard" />}
-        />
+            getOptionLabel={(option) => (typeof option === 'string' ? option : option.kizaiNam)}
+            inputValue={row.name}
+            onInputChange={(_event, value, reason) => {
+              // 候補を選んだ直後のresetはonChange側で反映済みなので無視する
+              if (reason === 'reset') return;
+              onUpdateRow({ name: value, kizaiId: null });
+            }}
+            onChange={(_event, value) => {
+              if (value && typeof value !== 'string') {
+                onUpdateRow({ name: value.kizaiNam, kizaiId: value.kizaiId });
+                return;
+              }
+              onUpdateRow({ name: value ?? '', kizaiId: null });
+            }}
+            renderInput={(params) => <TextField {...params} variant="standard" />}
+          />
+        </Box>
       </TableCell>
       <TableCell align="center">
         <MemoTooltip
@@ -393,6 +428,7 @@ const EquipmentTable = ({
   const [confirmBack, setConfirmBack] = useState(false);
   const [confirmCopy, setConfirmCopy] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [withdrawComment, setWithdrawComment] = useState('');
   const [requestOpen, setRequestOpen] = useState(false);
   // 差戻し・取下げ後の再申請では前回の申請先を初期選択にする
@@ -608,6 +644,42 @@ const EquipmentTable = ({
     copyAndCreate(false);
   };
 
+  /** 完了・完了解除・削除。いずれも保存済みの機材表にしか効かない */
+  const runStatusAction = async (
+    action: (id: number) => Promise<void>,
+    doneMessage: string,
+    failMessage: string,
+    afterDone?: () => void
+  ) => {
+    if (kizaihyouId === null) return;
+    setBusy(true);
+    setError('');
+    try {
+      await action(kizaihyouId);
+      setMessage(doneMessage);
+      if (afterDone) afterDone();
+      else router.refresh();
+    } catch {
+      setError(failMessage);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleComplete = () =>
+    runStatusAction(completeEquipmentTable, '完了にしました', '完了への変更に失敗しました。');
+
+  const handleReopen = () =>
+    runStatusAction(reopenEquipmentTable, '作成中に戻しました', '作成中への変更に失敗しました。');
+
+  // 削除すると一覧から消えるので、そのまま一覧へ戻す
+  const handleDelete = () => {
+    setDeleteOpen(false);
+    return runStatusAction(deleteEquipmentTable, '削除しました', '削除に失敗しました。', () =>
+      router.push('/equipment-table-list')
+    );
+  };
+
   const handleWithdraw = async () => {
     setBusy(true);
     setError('');
@@ -664,6 +736,27 @@ const EquipmentTable = ({
             <Button startIcon={<PictureAsPdfIcon />} onClick={handleExportPdf} disabled={busy}>
               PDF出力
             </Button>
+            {status === '完了' ? (
+              <Button startIcon={<LockOpenIcon />} onClick={handleReopen} disabled={busy}>
+                作成中に戻す
+              </Button>
+            ) : (
+              <Button
+                startIcon={<TaskAltIcon />}
+                onClick={handleComplete}
+                disabled={busy || kizaihyouId === null || !COMPLETABLE_STATUSES.includes(status)}
+              >
+                完了にする
+              </Button>
+            )}
+            <Button
+              startIcon={<DeleteForeverIcon />}
+              color="error"
+              onClick={() => setDeleteOpen(true)}
+              disabled={busy || kizaihyouId === null || status === '申請中'}
+            >
+              削除
+            </Button>
             <Button startIcon={<SaveIcon />} variant="outlined" onClick={handleSave} disabled={busy || readOnly}>
               保存
             </Button>
@@ -706,7 +799,9 @@ const EquipmentTable = ({
         )}
         {readOnly && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            申請中の機材表は編集できません。編集するには申請を取り下げてください。
+            {status === '完了'
+              ? '完了した機材表は編集できません。編集するには「作成中に戻す」を押してください。'
+              : '申請中の機材表は編集できません。編集するには申請を取り下げてください。'}
           </Alert>
         )}
         {status === '承認済' && (
@@ -883,6 +978,28 @@ const EquipmentTable = ({
               取り下げる
             </Button>
             <Button onClick={() => setWithdrawOpen(false)} disabled={busy}>
+              キャンセル
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={deleteOpen} onClose={() => setDeleteOpen(false)} fullWidth maxWidth="xs">
+          <DialogTitle fontSize="medium">機材表を削除する</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">
+              機材表 {cod} を削除すると機材表履歴一覧に出なくなります。 一覧の「削除済も表示」から元に戻せます。
+            </Typography>
+            {detail?.juchuHeadId !== null && detail?.juchuHeadId !== undefined && (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                機材管理の受注 {detail.juchuHeadId} に連携済みです。削除しても機材管理側の受注・機材明細は残ります。
+              </Alert>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" color="error" onClick={handleDelete} disabled={busy}>
+              削除する
+            </Button>
+            <Button onClick={() => setDeleteOpen(false)} disabled={busy}>
               キャンセル
             </Button>
           </DialogActions>

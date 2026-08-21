@@ -19,6 +19,7 @@ import {
   requestKizaihyou,
   selectKizaihyouHead,
   selectKizaihyouList,
+  updateKizaihyouDelFlg,
   updateKizaihyouJuchuLink,
   updateKizaihyouSts,
 } from '../db/tables/t-kizaihyou';
@@ -36,8 +37,8 @@ import {
   KIZAIHYOU_STS,
 } from './types';
 
-const STATUS_NAMES: EquipmentTableStatus[] = ['作成中', '申請中', '差戻し', '承認済', '取下げ'];
-const STATUS_COLORS: EquipmentTableStatusColor[] = ['default', 'info', 'error', 'success', 'warning'];
+const STATUS_NAMES: EquipmentTableStatus[] = ['作成中', '申請中', '差戻し', '承認済', '取下げ', '完了'];
+const STATUS_COLORS: EquipmentTableStatusColor[] = ['default', 'info', 'error', 'success', 'warning', 'secondary'];
 
 const toStatus = (value: string | undefined): EquipmentTableStatus =>
   STATUS_NAMES.find((name) => name === value) ?? '作成中';
@@ -55,8 +56,8 @@ const toStatusColor = (value: string | undefined): EquipmentTableStatusColor =>
  *
  * @returns 更新日時の新しい順に並んだ機材表
  */
-export const fetchEquipmentTableList = async (): Promise<EquipmentTableListRow[]> => {
-  const { data, error } = await selectKizaihyouList();
+export const fetchEquipmentTableList = async (includeDeleted = false): Promise<EquipmentTableListRow[]> => {
+  const { data, error } = await selectKizaihyouList(includeDeleted);
   if (error) throw new Error(`[fetchEquipmentTableList] 機材表の取得に失敗しました: ${error.message}`);
   if (!data?.length) return [];
 
@@ -89,6 +90,7 @@ export const fetchEquipmentTableList = async (): Promise<EquipmentTableListRow[]
         .map((tanto) => tanto.user_id),
       juchuHeadId: head.juchu_head_id,
       juchuLinked: head.juchu_kizai_head_id !== null,
+      deleted: head.del_flg === 1,
       shinseiHisId:
         head.shinsei_his_id !== null && hasSnapshotByHisId.get(head.shinsei_his_id) ? head.shinsei_his_id : null,
     };
@@ -139,6 +141,24 @@ const changeStatus = async (
 
   const { error: hisError } = await insertKizaihyouHis(kizaihyouId, actCod, actNam, user.userId, user.userNam, comment);
   if (hisError) throw new Error(`[changeStatus] 操作履歴の登録に失敗しました: ${hisError.message}`);
+};
+
+/**
+ * 論理削除フラグを切り替えて操作履歴を残す関数。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ * @param delFlg 1で削除、0で復元
+ * @param actCod 履歴に残す操作コード
+ * @param actNam 履歴に残す操作内容
+ */
+const changeDelFlg = async (kizaihyouId: number, delFlg: 0 | 1, actCod: number, actNam: string) => {
+  const user = await requireCurrentUser();
+
+  const { error } = await updateKizaihyouDelFlg(kizaihyouId, delFlg, user.userNam);
+  if (error) throw new Error(`[changeDelFlg] 削除状態の更新に失敗しました: ${error.message}`);
+
+  const { error: hisError } = await insertKizaihyouHis(kizaihyouId, actCod, actNam, user.userId, user.userNam, null);
+  if (hisError) throw new Error(`[changeDelFlg] 操作履歴の登録に失敗しました: ${hisError.message}`);
 };
 
 /**
@@ -215,6 +235,48 @@ export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: s
  */
 export const withdrawEquipmentTable = async (kizaihyouId: number, comment: string) => {
   await changeStatus(kizaihyouId, '取下げ', KIZAIHYOU_ACT.取り下げ, '取り下げ', comment || null);
+};
+
+/**
+ * 機材表を完了にする関数。
+ *
+ * 終わった案件を締めるための状態で、完了中は編集も申請もできない。
+ * 手を入れたくなったら`reopenEquipmentTable`で作成中に戻す。
+ * 連携済みでも機材管理側の受注には触らない（別システムの話なので）。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ */
+export const completeEquipmentTable = async (kizaihyouId: number) => {
+  await changeStatus(kizaihyouId, '完了', KIZAIHYOU_ACT.完了, '完了', null);
+};
+
+/**
+ * 完了を解除して作成中に戻す関数
+ * @param kizaihyouId 対象のkizaihyou_id
+ */
+export const reopenEquipmentTable = async (kizaihyouId: number) => {
+  await changeStatus(kizaihyouId, '作成中', KIZAIHYOU_ACT.完了解除, '完了を解除', null);
+};
+
+/**
+ * 機材表を削除する関数（論理削除）。
+ *
+ * **ステータスは変えない**。削除はdel_flgだけで表し、戻したときに
+ * 元のステータスがそのまま復活するようにする。
+ * 一覧は既定で削除済みを出さないので、「削除済も表示」から復元する。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ */
+export const deleteEquipmentTable = async (kizaihyouId: number) => {
+  await changeDelFlg(kizaihyouId, 1, KIZAIHYOU_ACT.削除, '削除');
+};
+
+/**
+ * 削除した機材表を元に戻す関数
+ * @param kizaihyouId 対象のkizaihyou_id
+ */
+export const restoreEquipmentTable = async (kizaihyouId: number) => {
+  await changeDelFlg(kizaihyouId, 0, KIZAIHYOU_ACT.復元, '削除を取り消し');
 };
 
 /**
@@ -386,6 +448,7 @@ const createKikikanJuchuKizai = async (kizaihyouId: number, juchuHeadId: number,
         tankaAmt: master?.reg_amt ?? 0,
         planKizaiQty: getActiveSum(row),
         planYobiQty: Number(row.spare) || 0,
+        indentNum: row.indent,
         mem: row.remark || null,
       };
     });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { unzipSync, zipSync } from 'fflate';
 
 import { EquipmentTableHead } from '../equipment-table-list/types';
-import { buildKizaihyouFileName } from './sheet';
+import { buildKizaihyouFileName, getIndentedName } from './sheet';
 import { EquipmentColumn, EquipmentRow } from './types';
 
 /**
@@ -248,7 +248,7 @@ export const buildKizaihyouExcel = async (input: ExcelExportInput): Promise<Uint
   rows.forEach((row, index) => {
     const rowNum = FIRST_DATA_ROW + index;
     xml = writeCell(xml, `B${rowNum}`, textCell(row.kind));
-    xml = writeCell(xml, `C${rowNum}`, textCell(row.name));
+    xml = writeCell(xml, `C${rowNum}`, textCell(getIndentedName(row)));
     xml = writeCell(xml, `D${rowNum}`, textCell(row.remark));
     const spare = Number(row.spare);
     if (row.spare && !Number.isNaN(spare) && spare !== 0) {

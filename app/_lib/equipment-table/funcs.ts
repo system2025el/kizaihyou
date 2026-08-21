@@ -103,6 +103,7 @@ export const fetchEquipmentTable = async (kizaihyouId: number): Promise<Equipmen
       name: row.kizai_nam,
       remark: row.mem ?? '',
       spare: row.spare_qty ? String(row.spare_qty) : '',
+      indent: row.indent_num,
       qty: qtyByRow.get(row.row_id) ?? {},
     })),
   };
@@ -127,6 +128,7 @@ const toContentInput = (columns: EquipmentColumn[], rows: EquipmentRow[]): Kizai
     kizaiNam: row.name,
     mem: row.remark,
     spareQty: Number(row.spare) || 0,
+    indentNum: row.indent,
     qty: columns.map((column) => {
       const value = Number(row.qty[column.id]);
       return row.qty[column.id] && !Number.isNaN(value) ? value : null;
@@ -183,6 +185,17 @@ export const createEquipmentTable = async (
  * そのままJSON.stringifyすると同じ内容でも文字列が一致しない。
  * 比較する値はすべて配列に並べ直してから文字列化すること。
  */
+/**
+ * DBに入っているスナップショットを画面の型に直す関数。
+ *
+ * jsonbは保存した当時の形のまま残るので、あとから足した項目は古いものに入っていない。
+ * 読むたびに既定値で埋めて、比較や表示が`undefined`に振り回されないようにする。
+ */
+const fromStoredSnapshot = (snapshot: unknown): EquipmentTableSnapshot => {
+  const stored = snapshot as EquipmentTableSnapshot;
+  return { ...stored, rows: stored.rows.map((row) => ({ ...row, indent: row.indent ?? 0 })) };
+};
+
 const normalizeSnapshot = (snapshot: EquipmentTableSnapshot) =>
   JSON.stringify([
     [
@@ -200,6 +213,7 @@ const normalizeSnapshot = (snapshot: EquipmentTableSnapshot) =>
       row.name,
       row.remark,
       row.spare,
+      row.indent,
       snapshot.columns.map((column) => row.qty[column.id] ?? ''),
     ]),
   ]);
@@ -234,7 +248,7 @@ export const saveEquipmentTable = async (
   const { data: latest, error } = await selectLatestKizaihyouSnapshot(kizaihyouId);
   if (error) throw new Error(`[saveEquipmentTable] 直近のスナップショット取得に失敗しました: ${error.message}`);
 
-  const latestSnapshot = latest?.snapshot as EquipmentTableSnapshot | null | undefined;
+  const latestSnapshot = latest?.snapshot ? fromStoredSnapshot(latest.snapshot) : null;
   if (latestSnapshot && normalizeSnapshot(latestSnapshot) === normalizeSnapshot(snapshot)) return;
 
   const { error: hisError } = await insertKizaihyouHis(
@@ -379,7 +393,7 @@ export const fetchEquipmentTableSnapshot = async (hisId: number): Promise<Equipm
     user: data.user_nam,
     action: data.act_nam,
     comment: data.mem ?? '',
-    snapshot: data.snapshot as unknown as EquipmentTableSnapshot,
+    snapshot: fromStoredSnapshot(data.snapshot),
   };
 };
 
@@ -470,11 +484,7 @@ export const fetchEquipmentTableForApproval = async (kizaihyouId: number): Promi
     throw new Error(`[fetchEquipmentTableForApproval] 前回の申請の取得に失敗しました: ${previousError.message}`);
 
   const diff = previous?.snapshot
-    ? buildEquipmentTableDiff(
-        previous.snapshot as unknown as EquipmentTableSnapshot,
-        request.snapshot,
-        formatDateTime(previous.act_dat)
-      )
+    ? buildEquipmentTableDiff(fromStoredSnapshot(previous.snapshot), request.snapshot, formatDateTime(previous.act_dat))
     : null;
 
   const current: EquipmentTableSnapshot = { head: detail.head, columns: detail.columns, rows: detail.rows };

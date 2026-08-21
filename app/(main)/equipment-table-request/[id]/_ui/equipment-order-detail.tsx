@@ -33,6 +33,7 @@ import { useMemo, useState } from 'react';
 
 import { toDiffKey } from '@/app/_lib/equipment-table/diff';
 import { EquipmentTableApproval } from '@/app/_lib/equipment-table/funcs';
+import { getIndentedName } from '@/app/_lib/equipment-table/sheet';
 import {
   approveEquipmentTable,
   checkKikikanJuchuLink,
@@ -73,7 +74,7 @@ const toOrderRows = (
       kizaiId: row.kizaiId,
       diffKey: toDiffKey(row),
       removed: false,
-      kizaiName: row.name,
+      kizaiName: getIndentedName(row),
       mem: row.remark,
       mem2: '',
       orderedQty: Object.values(row.qty).reduce((sum, value) => sum + (Number(value) || 0), 0),

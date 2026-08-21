@@ -1,5 +1,15 @@
 import { EquipmentRow } from './types';
 
+/**
+ * 機材名の前に付けるインデント文字。kikikanのm_dic（dic_id = 1）と同じ文字を使う。
+ * 直前の機材とセットで使うもの（付属ケーブル等）を表す。
+ */
+export const INDENT_CHARA = ' ┗ ';
+
+/** 表示・出力に使う機材名。インデントが付いている行は先頭に「 ┗ 」を足す */
+export const getIndentedName = (row: EquipmentRow) =>
+  row.name ? `${INDENT_CHARA.repeat(row.indent)}${row.name}` : row.name;
+
 /** ACTIVE（各ポジションの数量の合計） */
 export const getActiveSum = (row: EquipmentRow) =>
   Object.values(row.qty).reduce((sum, value) => sum + (Number(value) || 0), 0);

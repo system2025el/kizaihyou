@@ -30,7 +30,7 @@ import {
   exportEquipmentTableExcel,
   exportEquipmentTablePdf,
 } from '@/app/_lib/equipment-table/funcs';
-import { getActiveSum, getTotal, hasEquipmentRowContent } from '@/app/_lib/equipment-table/sheet';
+import { getActiveSum, getIndentedName, getTotal, hasEquipmentRowContent } from '@/app/_lib/equipment-table/sheet';
 import { formatDate } from '@/app/_lib/format';
 
 type HeadItemProps = {
@@ -191,7 +191,7 @@ const EquipmentTableSnapshotView = ({ detail }: EquipmentTableSnapshotViewProps)
             {shownRows.map((row) => (
               <TableRow key={row.id} hover>
                 <TableCell>{row.kind}</TableCell>
-                <TableCell>{row.name}</TableCell>
+                <TableCell sx={{ whiteSpace: 'pre' }}>{getIndentedName(row)}</TableCell>
                 <TableCell sx={{ whiteSpace: 'pre-wrap' }}>{row.remark}</TableCell>
                 <TableCell align="right">{getTotal(row) || ''}</TableCell>
                 <TableCell align="right">{getActiveSum(row) || ''}</TableCell>
