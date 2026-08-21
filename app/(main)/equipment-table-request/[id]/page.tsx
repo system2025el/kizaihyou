@@ -5,6 +5,7 @@ import { fetchEquipmentTableForApproval, fetchEquipmentTableHistory } from '@/ap
 
 import { buildStockDateRange, formatIsoDate } from './_lib/date-utils';
 import { fetchEquipmentStockMap } from './_lib/funcs';
+import { fetchMergePreview, MergePreview } from './_lib/merge-preview';
 import { EquipmentStockMap } from './_lib/types';
 import EquipmentOrderDetail from './_ui/equipment-order-detail';
 
@@ -41,6 +42,9 @@ const Page = async ({ params }: { params: Promise<{ id: string }> }) => {
 
   const history = await fetchEquipmentTableHistory(kizaihyouId);
 
-  return <EquipmentOrderDetail approval={approval} stockMap={stockMap} history={history} />;
+  // 連携済みなら、再申請の内容を機材明細へどう反映するかの下見を出す（参照のみ）
+  const mergePreview: MergePreview | null = await fetchMergePreview(approval);
+
+  return <EquipmentOrderDetail approval={approval} stockMap={stockMap} history={history} mergePreview={mergePreview} />;
 };
 export default Page;

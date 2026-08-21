@@ -45,7 +45,9 @@ import { EquipmentTimeline } from '@/app/_ui/equipment-timeline';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
 
 import { buildStockDateRange, formatIsoDate, formatMd, isSameDay } from '../_lib/date-utils';
+import { MergePreview } from '../_lib/merge-preview';
 import { EquipmentOrderRow, EquipmentStockMap } from '../_lib/types';
+import { MergePreviewPanel } from './merge-preview-panel';
 
 const RANGE_START_COLOR = '#BBDEFB';
 const RANGE_END_COLOR = '#FFF59D';
@@ -94,9 +96,11 @@ type Props = {
   approval: EquipmentTableApproval;
   stockMap: EquipmentStockMap;
   history: EquipmentTableHistoryEntry[];
+  /** 連携済みの場合の、機材明細への反映の下見（参照専用。未連携ならnull） */
+  mergePreview: MergePreview | null;
 };
 
-const EquipmentOrderDetail = ({ approval, stockMap, history }: Props) => {
+const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Props) => {
   const router = useRouter();
   const head = approval.head;
   const [rows, setRows] = useState<EquipmentOrderRow[]>(() => toOrderRows(approval.rows, approval.diff));
@@ -344,6 +348,8 @@ const EquipmentOrderDetail = ({ approval, stockMap, history }: Props) => {
           この機材表の申請先に指定されていないため、承認・差戻しはできません（内容の閲覧とコメントはできます）。
         </Alert>
       )}
+
+      {mergePreview && <MergePreviewPanel preview={mergePreview} />}
 
       {approval.diff && (
         <Alert severity="warning" sx={{ mb: 2 }}>

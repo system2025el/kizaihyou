@@ -299,3 +299,72 @@ export const selectKikikanAllocation = async (
     throw new Error('[selectKikikanAllocation] kikikanのDBエラー:', { cause: e });
   }
 };
+
+/** 機材管理に現在入っている受注機材ヘッダーの内容（反映画面の突き合わせに使う） */
+export type KikikanJuchuKizaiCurrent = {
+  headNam: string;
+  /** 現在の機材明細 */
+  rows: { kizaiId: number; kizaiNam: string; planKizaiQty: number; planYobiQty: number }[];
+  /** 入出庫（出庫・入庫 × 場所）。機材表の出庫日・入庫日との突き合わせに使う */
+  nyushuko: { shubetuId: number; bashoId: number; dat: string }[];
+};
+
+/**
+ * 受注機材ヘッダーの現在の内容を取得する関数（参照のみ）。
+ *
+ * 連携後は受注部が機材管理側で手を入れるため、機材表の申請内容と
+ * 突き合わせて見せるのに使う。**機材管理が正**で、こちらから勝手に上書きしない。
+ *
+ * @param juchuHeadId 受注番号
+ * @param juchuKizaiHeadId 受注機材ヘッダーID
+ * @returns 現在の内容。ヘッダーが無ければnull
+ */
+export const selectKikikanJuchuKizaiCurrent = async (
+  juchuHeadId: number,
+  juchuKizaiHeadId: number
+): Promise<KikikanJuchuKizaiCurrent | null> => {
+  try {
+    const head = await kikikanPool.query<{ head_nam: string | null }>(
+      `SELECT head_nam FROM ${KIKIKAN_SCHEMA}.t_juchu_kizai_head
+        WHERE juchu_head_id = $1 AND juchu_kizai_head_id = $2`,
+      [juchuHeadId, juchuKizaiHeadId]
+    );
+    if (!head.rows.length) return null;
+
+    const meisai = await kikikanPool.query<{
+      kizai_id: number;
+      kizai_nam: string | null;
+      plan_kizai_qty: number | null;
+      plan_yobi_qty: number | null;
+    }>(
+      `SELECT m.kizai_id, k.kizai_nam, m.plan_kizai_qty, m.plan_yobi_qty
+         FROM ${KIKIKAN_SCHEMA}.t_juchu_kizai_meisai m
+         LEFT JOIN ${KIKIKAN_SCHEMA}.m_kizai k ON k.kizai_id = m.kizai_id
+        WHERE m.juchu_head_id = $1 AND m.juchu_kizai_head_id = $2
+        ORDER BY m.dsp_ord_num, m.juchu_kizai_meisai_id`,
+      [juchuHeadId, juchuKizaiHeadId]
+    );
+
+    const nyushuko = await kikikanPool.query<{ shubetu_id: number; basho_id: number; dat: string }>(
+      `SELECT nyushuko_shubetu_id AS shubetu_id, nyushuko_basho_id AS basho_id,
+              to_char(nyushuko_dat AT TIME ZONE 'Asia/Tokyo', 'YYYY-MM-DD') AS dat
+         FROM ${KIKIKAN_SCHEMA}.t_juchu_kizai_nyushuko
+        WHERE juchu_head_id = $1 AND juchu_kizai_head_id = $2
+        ORDER BY nyushuko_shubetu_id, nyushuko_basho_id`,
+      [juchuHeadId, juchuKizaiHeadId]
+    );
+
+    return {
+      headNam: head.rows[0].head_nam ?? '',
+      rows: meisai.rows.map((row) => ({
+        kizaiId: row.kizai_id,
+        kizaiNam: row.kizai_nam ?? '',
+        planKizaiQty: row.plan_kizai_qty ?? 0,
+        planYobiQty: row.plan_yobi_qty ?? 0,
+      })),
+      nyushuko: nyushuko.rows.map((row) => ({ shubetuId: row.shubetu_id, bashoId: row.basho_id, dat: row.dat })),
+    };
+  } catch (e) {
+    throw new Error('[selectKikikanJuchuKizaiCurrent] kikikanのDBエラー:', { cause: e });
+  }
+};
