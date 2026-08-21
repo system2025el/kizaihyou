@@ -23,7 +23,6 @@ import LockOpenIcon from '@mui/icons-material/LockOpen';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import SaveIcon from '@mui/icons-material/Save';
 import SendIcon from '@mui/icons-material/Send';
-import SubdirectoryArrowRightIcon from '@mui/icons-material/SubdirectoryArrowRight';
 import TaskAltIcon from '@mui/icons-material/TaskAlt';
 import UndoIcon from '@mui/icons-material/Undo';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -90,6 +89,17 @@ const createTempId = (prefix: string) => {
   tempIdCounter += 1;
   return `${prefix}-new-${tempIdCounter}`;
 };
+
+/**
+ * 名称欄の左に置く、インデントの切り替え。
+ *
+ * 記号そのもの（`┗`）をボタンの中身にして、設定するとどう表示されるかが
+ * その場で分かるようにしている。アイコンだと、選んでいない行でも
+ * 何か設定されているように見えてしまうため。
+ */
+const INDENT_MARK = '┗';
+/** 切り替えの幅。設定の有無で名称欄がずれないよう、常に同じ幅を空けておく */
+const INDENT_SLOT_WIDTH = 24;
 
 const createRow = (): EquipmentRow => ({
   id: createTempId('row'),
@@ -268,6 +278,8 @@ const EquipmentRowView = ({
         opacity: isDragging ? 0.6 : 1,
         zIndex: isDragging ? 1 : 'auto',
         bgcolor: isDragging ? 'background.paper' : undefined,
+        // インデントの切り替えは普段は目立たせない（オプションなので）
+        '&:hover .indent-toggle': { opacity: 1 },
       }}
     >
       <TableCell>
@@ -312,17 +324,29 @@ const EquipmentRowView = ({
       <TableCell>
         <Box display="flex" alignItems="center" gap={0.5}>
           {readOnly ? (
-            <Typography variant="body2" color="text.secondary" width={28} textAlign="center">
-              {row.indent ? '┗' : ''}
-            </Typography>
+            <Box width={INDENT_SLOT_WIDTH} textAlign="center" color="text.secondary" fontSize={13}>
+              {row.indent ? INDENT_MARK : ''}
+            </Box>
           ) : (
             <IconButton
+              className="indent-toggle"
               size="small"
-              color={row.indent ? 'primary' : 'default'}
               onClick={() => onUpdateRow({ indent: row.indent ? 0 : 1 })}
-              title={row.indent ? '上の機材とのセットを解除する' : '上の機材とセットにする（ ┗ ）'}
+              title={row.indent ? '上の機材とのセットを解除する' : '上の機材とセットにする'}
+              sx={{
+                width: INDENT_SLOT_WIDTH,
+                height: INDENT_SLOT_WIDTH,
+                borderRadius: 1,
+                fontSize: 13,
+                lineHeight: 1,
+                color: row.indent ? 'text.primary' : 'text.disabled',
+                // 設定済みの行は常に見せ、そうでない行はホバー・フォーカスまで薄いままにする
+                opacity: row.indent ? 1 : 0.2,
+                transition: 'opacity 120ms',
+                '&:focus-visible': { opacity: 1 },
+              }}
             >
-              <SubdirectoryArrowRightIcon fontSize="small" />
+              {INDENT_MARK}
             </IconButton>
           )}
           <Autocomplete
