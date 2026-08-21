@@ -17,13 +17,16 @@ const HEAD_COLUMNS = `
 /**
  * 機材表ヘッダを一覧取得する関数
  * @param includeDeleted 削除済み（del_flg = 1）も含めるか
+ * @param addUserId 作成者で絞る場合のm_user.user_id（nullなら全件）
  * @returns 更新日時の新しい順に並んだ機材表ヘッダ
  */
-export const selectKizaihyouList = async (includeDeleted = false) => {
+export const selectKizaihyouList = async (includeDeleted = false, addUserId: string | null = null) => {
   const supabase = await createClient();
   try {
-    const query = supabase.schema(SCHEMA).from('t_kizaihyou').select(HEAD_COLUMNS);
-    return await (includeDeleted ? query : query.eq('del_flg', 0)).order('upd_dat', { ascending: false });
+    let query = supabase.schema(SCHEMA).from('t_kizaihyou').select(HEAD_COLUMNS);
+    if (!includeDeleted) query = query.eq('del_flg', 0);
+    if (addUserId) query = query.eq('add_user_id', addUserId);
+    return await query.order('upd_dat', { ascending: false });
   } catch (e) {
     throw new Error('[selectKizaihyouList] DBエラー:', { cause: e });
   }
@@ -120,7 +123,12 @@ export type KizaihyouHeadInput = {
  * @param copyFromId コピー元のkizaihyou_id（コピー作成でない場合はnull）
  * @returns 登録した機材表ヘッダ
  */
-export const insertKizaihyou = async (head: KizaihyouHeadInput, addUser: string, copyFromId: number | null) => {
+export const insertKizaihyou = async (
+  head: KizaihyouHeadInput,
+  addUser: string,
+  addUserId: string,
+  copyFromId: number | null
+) => {
   const supabase = await createClient();
   try {
     return await supabase
@@ -135,6 +143,7 @@ export const insertKizaihyou = async (head: KizaihyouHeadInput, addUser: string,
         mem: head.mem,
         copy_from_id: copyFromId,
         add_user: addUser,
+        add_user_id: addUserId,
         upd_user: addUser,
       })
       .select('kizaihyou_id, kizaihyou_cod')
@@ -311,21 +320,22 @@ export const requestKizaihyou = async (input: KizaihyouRequestInput) => {
  *
  * @param sourceId コピー元のkizaihyou_id
  * @param addUser 作成者名
+ * @param addUserId 作成者のm_user.user_id
  * @returns 作成した機材表のkizaihyou_idとkizaihyou_cod
  */
-export const copyKizaihyou = async (sourceId: number, addUser: string) => {
+export const copyKizaihyou = async (sourceId: number, addUser: string, addUserId: string) => {
   const connection = await pool.connect();
   try {
     await connection.query('BEGIN');
 
     const head = await connection.query<{ kizaihyou_id: string; kizaihyou_cod: string }>(
       `INSERT INTO ${SCHEMA}.t_kizaihyou
-              (koen_nam, basho_nam, kokyaku_nam, mem, copy_from_id, add_user, upd_user)
-       SELECT koen_nam, basho_nam, kokyaku_nam, mem, kizaihyou_id, $2, $2
+              (koen_nam, basho_nam, kokyaku_nam, mem, copy_from_id, add_user, add_user_id, upd_user)
+       SELECT koen_nam, basho_nam, kokyaku_nam, mem, kizaihyou_id, $2, $3, $2
          FROM ${SCHEMA}.t_kizaihyou
         WHERE kizaihyou_id = $1
     RETURNING kizaihyou_id, kizaihyou_cod`,
-      [sourceId, addUser]
+      [sourceId, addUser, addUserId]
     );
     if (!head.rows.length) throw new Error(`コピー元の機材表が見つかりません (kizaihyou_id=${sourceId})`);
     const newId = Number(head.rows[0].kizaihyou_id);

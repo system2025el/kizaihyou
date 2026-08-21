@@ -278,6 +278,7 @@ const EquipmentTableList = () => {
 
       <Typography variant="body2" color="text.secondary" mb={1}>
         {hasFilter(filter) ? `${rows.length}件中 ${filteredRows.length}件` : `${rows.length}件`}
+        （自分が作成した機材表のみ）
       </Typography>
 
       <TableContainer>

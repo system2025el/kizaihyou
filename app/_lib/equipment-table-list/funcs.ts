@@ -47,18 +47,20 @@ const toStatusColor = (value: string | undefined): EquipmentTableStatusColor =>
   STATUS_COLORS.find((color) => color === value) ?? 'default';
 
 /**
- * 機材表履歴一覧に表示する機材表を取得する関数。
+ * 機材表を一覧の形で取得する関数。
  *
  * **操作履歴は含めない**。履歴は機材表1件あたり際限なく増えるので、全機材表分を
  * 先読みすると一覧を開くだけで重くなる（定期的に取り直すなら尚更）。
  * 履歴が要るのは履歴ダイアログを開いたときだけなので、そこで
  * `fetchEquipmentTableHistory`を呼ぶこと。
  *
+ * @param includeDeleted 削除済み（del_flg = 1）も含めるか
+ * @param addUserId 作成者で絞る場合のm_user.user_id（nullなら全件）
  * @returns 更新日時の新しい順に並んだ機材表
  */
-export const fetchEquipmentTableList = async (includeDeleted = false): Promise<EquipmentTableListRow[]> => {
-  const { data, error } = await selectKizaihyouList(includeDeleted);
-  if (error) throw new Error(`[fetchEquipmentTableList] 機材表の取得に失敗しました: ${error.message}`);
+const fetchList = async (includeDeleted: boolean, addUserId: string | null): Promise<EquipmentTableListRow[]> => {
+  const { data, error } = await selectKizaihyouList(includeDeleted, addUserId);
+  if (error) throw new Error(`[fetchList] 機材表の取得に失敗しました: ${error.message}`);
   if (!data?.length) return [];
 
   // 「申請/承認された内容を開く」アイコンを出すかの判定に、申請履歴の分だけ有無を引く
@@ -66,7 +68,7 @@ export const fetchEquipmentTableList = async (includeDeleted = false): Promise<E
   const { data: flags, error: flagError } = shinseiHisIds.length
     ? await selectKizaihyouHisSnapshotFlags(shinseiHisIds)
     : { data: [], error: null as null };
-  if (flagError) throw new Error(`[fetchEquipmentTableList] 申請履歴の取得に失敗しました: ${flagError.message}`);
+  if (flagError) throw new Error(`[fetchList] 申請履歴の取得に失敗しました: ${flagError.message}`);
 
   const hasSnapshotByHisId = new Map((flags ?? []).map((flag) => [flag.his_id, flag.snapshot_flg === 1]));
 
@@ -98,6 +100,24 @@ export const fetchEquipmentTableList = async (includeDeleted = false): Promise<E
 };
 
 /**
+ * 機材表履歴一覧に表示する機材表を取得する関数。
+ *
+ * **ログイン中のユーザーが作った機材表だけ**を返す。作成者の判定には
+ * 氏名（`add_user`）ではなく`add_user_id`を使う——氏名は改姓や同姓同名で壊れるため。
+ *
+ * 絞り込んでいるのは画面に出す一覧だけで、RLSは認証済みユーザーに一律許可のまま。
+ * 他人の機材表もIDが分かれば機材表画面から開けるので、閲覧そのものを止めたい場合は
+ * RLSポリシーを別途書くこと。
+ *
+ * @param includeDeleted 削除済み（del_flg = 1）も含めるか
+ * @returns 更新日時の新しい順に並んだ、自分が作った機材表
+ */
+export const fetchEquipmentTableList = async (includeDeleted = false): Promise<EquipmentTableListRow[]> => {
+  const user = await requireCurrentUser();
+  return fetchList(includeDeleted, user.userId);
+};
+
+/**
  * 既存の機材表をコピーして新規作成する関数
  * @param sourceId コピー元のkizaihyou_id
  * @param sourceCod コピー元の機材表ID（履歴に残す表示用の値）
@@ -105,7 +125,7 @@ export const fetchEquipmentTableList = async (includeDeleted = false): Promise<E
  */
 export const copyEquipmentTable = async (sourceId: number, sourceCod: string): Promise<number> => {
   const user = await requireCurrentUser();
-  const { kizaihyouId } = await copyKizaihyou(sourceId, user.userNam);
+  const { kizaihyouId } = await copyKizaihyou(sourceId, user.userNam, user.userId);
 
   const { error } = await insertKizaihyouHis(
     kizaihyouId,
@@ -287,7 +307,8 @@ export const restoreEquipmentTable = async (kizaihyouId: number) => {
  */
 export const fetchApprovalRequestList = async (): Promise<EquipmentTableListRow[]> => {
   const user = await requireCurrentUser();
-  const rows = await fetchEquipmentTableList();
+  // 承認するのは他人が作った機材表なので、こちらは作成者で絞らない
+  const rows = await fetchList(false, null);
   return rows.filter((row) => row.status === '申請中' && row.tantoUserIds.includes(user.userId));
 };
 

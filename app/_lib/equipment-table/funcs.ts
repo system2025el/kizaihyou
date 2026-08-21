@@ -157,7 +157,7 @@ export const createEquipmentTable = async (
 ): Promise<number> => {
   const user = await requireCurrentUser();
 
-  const { data, error } = await insertKizaihyou(toHeadInput(head), user.userNam, null);
+  const { data, error } = await insertKizaihyou(toHeadInput(head), user.userNam, user.userId, null);
   if (error) throw new Error(`[createEquipmentTable] 機材表の作成に失敗しました: ${error.message}`);
 
   await saveKizaihyouContent(data.kizaihyou_id, toHeadInput(head), toContentInput(columns, rows), user.userNam);
@@ -522,7 +522,7 @@ export const createEquipmentTableFromSnapshot = async (hisId: number): Promise<n
   const { head, columns, rows } = source.snapshot;
   const headInput = { ...toHeadInput(head), shukkoDat: null, nyukoDat: null };
 
-  const { data, error } = await insertKizaihyou(headInput, user.userNam, source.kizaihyouId);
+  const { data, error } = await insertKizaihyou(headInput, user.userNam, user.userId, source.kizaihyouId);
   if (error) throw new Error(`[createEquipmentTableFromSnapshot] 機材表の作成に失敗しました: ${error.message}`);
 
   await saveKizaihyouContent(data.kizaihyou_id, headInput, toContentInput(columns, rows), user.userNam);

@@ -72,6 +72,7 @@ export type Database = {
         Row: {
           add_dat: string;
           add_user: string | null;
+          add_user_id: string | null;
           basho_nam: string | null;
           copy_from_id: number | null;
           del_flg: number;
@@ -95,6 +96,7 @@ export type Database = {
         Insert: {
           add_dat?: string;
           add_user?: string | null;
+          add_user_id?: string | null;
           basho_nam?: string | null;
           copy_from_id?: number | null;
           del_flg?: number;
@@ -118,6 +120,7 @@ export type Database = {
         Update: {
           add_dat?: string;
           add_user?: string | null;
+          add_user_id?: string | null;
           basho_nam?: string | null;
           copy_from_id?: number | null;
           del_flg?: number;
@@ -139,6 +142,13 @@ export type Database = {
           upd_user?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: 't_kizaihyou_add_user_id_fkey';
+            columns: ['add_user_id'];
+            isOneToOne: false;
+            referencedRelation: 'm_user';
+            referencedColumns: ['user_id'];
+          },
           {
             foreignKeyName: 't_kizaihyou_copy_from_id_fkey';
             columns: ['copy_from_id'];

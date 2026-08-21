@@ -77,6 +77,7 @@ const { data: head, error: he } = await kz
     nyuko_dat: NYUKO,
     mem: '検証用に自動生成',
     add_user: shinseisha.user_nam,
+    add_user_id: shinseisha.user_id,
     upd_user: shinseisha.user_nam,
   })
   .select('kizaihyou_id, kizaihyou_cod')
