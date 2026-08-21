@@ -97,6 +97,21 @@ export type EquipmentTableListRow = {
   shinseiHisId: number | null;
 };
 
+/**
+ * 機材表申請依頼画面の「対応済み」タブに出す1行。
+ * 一覧の行に、直近の承認・差戻しが誰のいつの操作だったかを足したもの。
+ */
+export type ApprovalHandledRow = EquipmentTableListRow & {
+  /** 直近の対応（'承認' か '差戻し'） */
+  handledAct: string;
+  handledBy: string;
+  handledAt: string;
+  /** これまでに承認された回数。1回以上なら、今の申請は承認済からの再申請 */
+  approvedCount: number;
+  /** これまでに差し戻された回数 */
+  rejectedCount: number;
+};
+
 /** 機材表画面が扱うヘッダ情報 */
 export type EquipmentTableHead = {
   eventName: string;

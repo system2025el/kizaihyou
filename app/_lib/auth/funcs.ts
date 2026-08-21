@@ -23,7 +23,12 @@ export const ensureCurrentUser = async (): Promise<CurrentUser | null> => {
   const { data: profile, error } = await selectUser(user.id);
   if (error) throw new Error(`[ensureCurrentUser] ユーザー取得に失敗しました: ${error.message}`);
   if (profile) {
-    return { userId: profile.user_id, email: profile.email, userNam: profile.user_nam };
+    return {
+      userId: profile.user_id,
+      email: profile.email,
+      userNam: profile.user_nam,
+      permission: profile.permission,
+    };
   }
 
   const metadataNam = typeof user.user_metadata?.user_nam === 'string' ? user.user_metadata.user_nam : '';
@@ -31,7 +36,12 @@ export const ensureCurrentUser = async (): Promise<CurrentUser | null> => {
   const { data: created, error: insertError } = await insertUser(user.id, user.email, userNam);
   if (insertError) throw new Error(`[ensureCurrentUser] ユーザー登録に失敗しました: ${insertError.message}`);
 
-  return { userId: created.user_id, email: created.email, userNam: created.user_nam };
+  return {
+    userId: created.user_id,
+    email: created.email,
+    userNam: created.user_nam,
+    permission: created.permission,
+  };
 };
 
 /**

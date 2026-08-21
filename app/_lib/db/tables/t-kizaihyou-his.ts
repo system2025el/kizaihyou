@@ -97,6 +97,31 @@ export const selectKizaihyouHisSnapshotFlags = async (hisIds: number[]) => {
 };
 
 /**
+ * 承認・差戻しの履歴を機材表を問わず新しい順に取得する関数。
+ *
+ * 機材表申請依頼画面の「対応済み」タブが使う。**スナップショットは引かない**
+ * （1件あたりのjsonbが大きく、一覧では中身が要らないため）。
+ *
+ * @param actCods 対象の操作コード（承認・差戻し）
+ * @param limit 取得する上限件数
+ * @returns 新しい順の履歴
+ */
+export const selectKizaihyouHandledHis = async (actCods: number[], limit: number) => {
+  const supabase = await createClient();
+  try {
+    return await supabase
+      .schema(SCHEMA)
+      .from('t_kizaihyou_his')
+      .select('his_id, kizaihyou_id, act_cod, act_nam, act_dat, user_nam')
+      .in('act_cod', actCods)
+      .order('his_id', { ascending: false })
+      .limit(limit);
+  } catch (e) {
+    throw new Error('[selectKizaihyouHandledHis] DBエラー:', { cause: e });
+  }
+};
+
+/**
  * ひとつ前の申請（スナップショット付き）を取得する関数。
  * 機材表承認画面が「前回の申請から何が変わったか」を出すために使う。
  *

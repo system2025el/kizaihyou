@@ -23,12 +23,17 @@ import {
   updateKizaihyouJuchuLink,
   updateKizaihyouSts,
 } from '../db/tables/t-kizaihyou';
-import { insertKizaihyouHis, selectKizaihyouHisSnapshotFlags } from '../db/tables/t-kizaihyou-his';
+import {
+  insertKizaihyouHis,
+  selectKizaihyouHandledHis,
+  selectKizaihyouHisSnapshotFlags,
+} from '../db/tables/t-kizaihyou-his';
 import { fetchEquipmentTable } from '../equipment-table/funcs';
 import { getActiveSum } from '../equipment-table/sheet';
 import { validateForRequest } from '../equipment-table/validation';
 import { formatDate, formatDateTime, todayInJst } from '../format';
 import {
+  ApprovalHandledRow,
   EquipmentTableListRow,
   EquipmentTableStatus,
   EquipmentTableStatusColor,
@@ -310,6 +315,68 @@ export const fetchApprovalRequestList = async (): Promise<EquipmentTableListRow[
   // 承認するのは他人が作った機材表なので、こちらは作成者で絞らない
   const rows = await fetchList(false, null);
   return rows.filter((row) => row.status === '申請中' && row.tantoUserIds.includes(user.userId));
+};
+
+/** 「対応済み」タブが遡る承認・差戻し履歴の上限。増えすぎたら期間で絞る作りに変える */
+const HANDLED_HISTORY_LIMIT = 500;
+
+/**
+ * 機材表申請依頼画面の「対応済み」タブに出す機材表を取得する関数。
+ *
+ * 一度承認すると申請依頼一覧（申請中だけ）から消えるので、承認したあとの
+ * 追跡——とくに**機材管理への連携が済んでいるか**——ができるようにするためのもの。
+ *
+ * **自分が対応したものだけではなく、受注部の誰かが対応したものを全部返す**。
+ * 申請先は複数指定でき、そのうち1人が承認すれば成立する運用なので、
+ * 他の担当者が承認した案件の連携失敗も拾えるようにしている。
+ *
+ * 判定には`t_kizaihyou_tanto`ではなく操作履歴（承認・差戻し）を使う。
+ * 申請先は再申請のたびに入れ直されるため、担当者で辿ると過去の対応が消える。
+ *
+ * @returns 対応日時の新しい順に並んだ機材表
+ */
+export const fetchApprovalHandledList = async (): Promise<ApprovalHandledRow[]> => {
+  const user = await requireCurrentUser();
+  if (!hasPermission(user.permission, PERMISSION.juchu_tanto))
+    throw new Error('[fetchApprovalHandledList] 受注部担当者の権限がありません');
+
+  const { data: his, error } = await selectKizaihyouHandledHis(
+    [KIZAIHYOU_ACT.承認, KIZAIHYOU_ACT.差戻し],
+    HANDLED_HISTORY_LIMIT
+  );
+  if (error) throw new Error(`[fetchApprovalHandledList] 承認履歴の取得に失敗しました: ${error.message}`);
+  if (!his?.length) return [];
+
+  // his_idの降順で来るので、機材表ごとに最初に現れたものが直近の対応になる
+  const latestByKizaihyouId = new Map<number, (typeof his)[number]>();
+  // 承認・差戻しの回数も数える。承認が1回でもあれば、次の申請は「承認済からの再申請」になる
+  const countsByKizaihyouId = new Map<number, { approved: number; rejected: number }>();
+  for (const entry of his) {
+    if (!latestByKizaihyouId.has(entry.kizaihyou_id)) latestByKizaihyouId.set(entry.kizaihyou_id, entry);
+    const counts = countsByKizaihyouId.get(entry.kizaihyou_id) ?? { approved: 0, rejected: 0 };
+    if (entry.act_cod === KIZAIHYOU_ACT.承認) counts.approved += 1;
+    else counts.rejected += 1;
+    countsByKizaihyouId.set(entry.kizaihyou_id, counts);
+  }
+
+  const rows = await fetchList(false, null);
+  return rows
+    .flatMap((row) => {
+      const handled = latestByKizaihyouId.get(row.id);
+      if (!handled) return [];
+      const counts = countsByKizaihyouId.get(row.id) ?? { approved: 0, rejected: 0 };
+      return [
+        {
+          ...row,
+          handledAct: handled.act_cod === KIZAIHYOU_ACT.承認 ? '承認' : '差戻し',
+          handledBy: handled.user_nam,
+          handledAt: formatDateTime(handled.act_dat),
+          approvedCount: counts.approved,
+          rejectedCount: counts.rejected,
+        },
+      ];
+    })
+    .sort((a, b) => (a.handledAt < b.handledAt ? 1 : -1));
 };
 
 /**

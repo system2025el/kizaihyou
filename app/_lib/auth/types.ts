@@ -3,4 +3,6 @@ export type CurrentUser = {
   userId: string;
   email: string;
   userNam: string;
+  /** 権限のビットマスク（m_user.permission）。判定は`hasPermission`で行う */
+  permission: number;
 };
