@@ -1,5 +1,6 @@
 'use client';
 
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -25,7 +26,13 @@ const NAV_ITEMS = [
   { label: '機材表申請依頼', href: '/equipment-table-request', icon: <FactCheckIcon /> },
 ];
 
-const AppShell = ({ children }: { children: React.ReactNode }) => {
+type AppShellProps = {
+  children: React.ReactNode;
+  /** ログイン中のユーザーの氏名。未ログインなら空文字（middlewareが/loginへ飛ばすので通常は入る） */
+  userNam: string;
+};
+
+const AppShell = ({ children, userNam }: AppShellProps) => {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
@@ -45,6 +52,14 @@ const AppShell = ({ children }: { children: React.ReactNode }) => {
           <Typography variant="h6" noWrap component="div">
             機材表
           </Typography>
+          {userNam && (
+            <Box display="flex" alignItems="center" gap={0.5} ml="auto" color="text.secondary" minWidth={0}>
+              <AccountCircleIcon fontSize="small" />
+              <Typography variant="body2" noWrap title={`${userNam} でログイン中`}>
+                {userNam}
+              </Typography>
+            </Box>
+          )}
         </Toolbar>
       </AppBar>
 

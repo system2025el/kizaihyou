@@ -232,8 +232,28 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
     // 引き当てのある日だけ行があるので、無い日は保有数がそのまま在庫数になる
     const base = stock.stockByDate[iso] ?? stock.kizaiQty;
     const linked = stock.linkedByDate[iso] ?? 0;
-    return base + linked - (isInRange(date) ? row.orderedQty + row.spareQty : 0);
+    // 行の数量ではなく機材ごとの合計を引く（同じ機材が複数行あるとき、行ごとだと引き足りない）
+    const requested = row.kizaiId === null ? 0 : (requestedByKizaiId[row.kizaiId] ?? 0);
+    return base + linked - (isInRange(date) ? requested : 0);
   };
+
+  /**
+   * 機材IDごとの要求数の合計と行数。
+   *
+   * 同じ機材を別の行に分けて書くことがある（付ける場所ごとに分ける等）。
+   * 在庫は機材に対する数字なので、行ごとに引くとどの行も引き足りない値になる。
+   * 機材管理側も明細は行ごとに作るが、在庫は合計で減るので合わせている。
+   */
+  const { requestedByKizaiId, rowCountByKizaiId } = useMemo(() => {
+    const requested: Record<number, number> = {};
+    const rowCount: Record<number, number> = {};
+    for (const row of rows) {
+      if (row.kizaiId === null) continue;
+      requested[row.kizaiId] = (requested[row.kizaiId] ?? 0) + row.orderedQty + row.spareQty;
+      rowCount[row.kizaiId] = (rowCount[row.kizaiId] ?? 0) + 1;
+    }
+    return { requestedByKizaiId: requested, rowCountByKizaiId: rowCount };
+  }, [rows]);
 
   /**
    * 前回の申請時点の数量。数量が変わった行と、削除された行で返す。
@@ -507,6 +527,11 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                         )}
                         {row.removed && <Chip label="削除" size="small" color="error" />}
                       </Box>
+                      {row.kizaiId !== null && (rowCountByKizaiId[row.kizaiId] ?? 0) > 1 && (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          同じ機材が{rowCountByKizaiId[row.kizaiId]}行（合計 {requestedByKizaiId[row.kizaiId]}）
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell
                       sx={{ position: 'sticky', left: STICKY_LEFT.total, zIndex: 1, bgcolor: TOTAL_COLUMN_COLOR }}
