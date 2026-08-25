@@ -157,7 +157,7 @@ const EquipmentTableRequest = () => {
   const isHandled = tab === 'handled';
   const rows: EquipmentTableListRow[] = isHandled ? visibleHandled : pendingRows;
   const filteredRows = rows.filter((row) => matchesQuery(row, query));
-  const columnCount = isHandled ? 12 : 10;
+  const columnCount = isHandled ? 12 : 11;
 
   const showUnlinked = () => {
     setTab('handled');
@@ -275,9 +275,9 @@ const EquipmentTableRequest = () => {
                 <>
                   <TableCell>対応</TableCell>
                   <TableCell>対応日時</TableCell>
-                  <TableCell>機材管理の受注No.</TableCell>
                 </>
               )}
+              <TableCell>機材管理の受注No.</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -330,19 +330,19 @@ const EquipmentTableRequest = () => {
                         {handled.handledAct} / {handled.handledBy}
                       </TableCell>
                       <TableCell>{handled.handledAt}</TableCell>
-                      <TableCell>
-                        {row.juchuLinked ? (
-                          row.juchuHeadId
-                        ) : isUnlinked(row) ? (
-                          <Typography variant="body2" color="error">
-                            未連携{row.juchuHeadId ? `（伝票 ${row.juchuHeadId}・明細なし）` : ''}
-                          </Typography>
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
                     </>
                   )}
+                  <TableCell>
+                    {row.juchuLinked ? (
+                      row.juchuHeadId
+                    ) : isUnlinked(row) ? (
+                      <Typography variant="body2" color="error">
+                        未連携{row.juchuHeadId ? `（伝票 ${row.juchuHeadId}・明細なし）` : ''}
+                      </Typography>
+                    ) : (
+                      '-'
+                    )}
+                  </TableCell>
                 </TableRow>
               );
             })}
