@@ -30,7 +30,7 @@ import {
 } from '../db/tables/t-kizaihyou-his';
 import { fetchEquipmentTable } from '../equipment-table/funcs';
 import { getActiveSum } from '../equipment-table/sheet';
-import { validateForRequest } from '../equipment-table/validation';
+import { validateForRequest, validateLengthForKikikan } from '../equipment-table/validation';
 import { formatDate, formatDateTime, todayInJst } from '../format';
 import {
   ApprovalHandledRow,
@@ -231,7 +231,7 @@ export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: s
   if (!detail) throw new Error('[requestEquipmentTable] 機材表が見つかりません');
 
   // 画面でも止めているが、Server Actionsを直接呼ばれた場合に備えてここでも確かめる
-  const errors = validateForRequest(detail.head);
+  const errors = validateForRequest(detail.head, detail.rows);
   if (errors.length) throw new Error(`[requestEquipmentTable] ${errors.join(' ')}`);
 
   const tantoNam = tanto.map((option) => option.userNam).join('、');
@@ -571,6 +571,15 @@ const createKikikanJuchuKizai = async (kizaihyouId: number, juchuHeadId: number,
  */
 const linkKikikanJuchu = async (kizaihyouId: number, userNam: string, existingJuchuHeadId: number | null = null) => {
   const { data: head } = await selectKizaihyouHead(kizaihyouId);
+
+  // 連携先の文字数に収まらないとkikikanのDBエラーになる。申請時にも止めているが、
+  // それより前に申請されたものもあるので、伝票だけできて明細で失敗する状態を作らないよう
+  // kikikanに何か書く前に確かめる
+  if (!head?.juchu_kizai_head_id) {
+    const detail = await fetchEquipmentTable(kizaihyouId);
+    const lengthErrors = detail ? validateLengthForKikikan(detail.head, detail.rows) : [];
+    if (lengthErrors.length) throw new Error(`機材表を直してから再連携してください。${lengthErrors.join(' ')}`);
+  }
 
   // 既存の受注番号を指定された場合は伝票を作らず、その伝票に明細だけ足す
   if (head?.juchu_head_id === null && existingJuchuHeadId !== null) {

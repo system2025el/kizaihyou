@@ -499,7 +499,7 @@ const EquipmentTable = ({
   const isDirty = currentSnapshot !== savedSnapshot;
 
   // 申請にだけ必要な入力チェック（保存は書きかけでもできる）
-  const requestErrors = useMemo(() => validateForRequest(head), [head]);
+  const requestErrors = useMemo(() => validateForRequest(head, rows), [head, rows]);
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
@@ -1053,7 +1053,7 @@ const EquipmentTable = ({
             {requestErrors.length > 0 && (
               <Alert severity="error" sx={{ mb: 2 }}>
                 <Typography variant="body2" fontWeight="bold">
-                  次の項目を入力しないと申請できません
+                  次の点を直さないと申請できません
                 </Typography>
                 {requestErrors.map((error) => (
                   <Typography key={error} variant="body2">
