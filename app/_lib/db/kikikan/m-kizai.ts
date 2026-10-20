@@ -15,7 +15,7 @@ export const selectKikikanKizaiList = async () => {
   try {
     return await supabaseKikikan
       .from('v_kizai_lst_sel')
-      .select('kizai_id, kizai_nam, bumon_id')
+      .select('kizai_id, kizai_nam, bumon_id, shozoku_nam, kizai_grp_cod')
       .neq('del_flg', 1)
       .neq('dsp_flg', 0)
       .neq('ctn_flg', 1)

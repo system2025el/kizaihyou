@@ -43,6 +43,22 @@ export type KikikanDatabase = {
         Update: never;
         Relationships: [];
       };
+      /**
+       * 機材のセットオプション（付属品）マスタ。親機材`kizai_id`に付属品`set_kizai_id`が複数ぶら下がる。
+       * kikikanの機材追加ダイアログで、親機材を選んだときに付属品を選ばせるのに使っている
+       */
+      m_kizai_set: {
+        Row: {
+          kizai_id: number;
+          set_kizai_id: number;
+          dsp_ord_num: number | null;
+          /** 1 = 削除済み */
+          del_flg: number | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Views: {
       /**
@@ -54,12 +70,30 @@ export type KikikanDatabase = {
           kizai_id: number;
           kizai_nam: string;
           bumon_id: number | null;
+          /** 在庫場所の名前（KICS / YARD など） */
+          shozoku_nam: string | null;
           kizai_grp_cod: number | null;
           dsp_ord_num: number | null;
           /** 1 = コンテナ。機材表では扱わないので候補から除く */
           ctn_flg: number | null;
           del_flg: number | null;
           dsp_flg: number | null;
+        };
+        Relationships: [];
+      };
+      /**
+       * 機材一覧のビュー（v_kizai_lst_selと違い、非表示・コンテナの機材も含む）。
+       * kikikanはセットオプションの付属品の名前をこちらから引いているので揃える
+       */
+      v_kizai_lst: {
+        Row: {
+          kizai_id: number;
+          kizai_nam: string;
+          bumon_id: number | null;
+          shozoku_nam: string | null;
+          kizai_grp_cod: number | null;
+          dsp_ord_num: number | null;
+          del_flg: number | null;
         };
         Relationships: [];
       };

@@ -119,6 +119,8 @@ DDLは`scripts/db-migration/01-init-kizaihyou.sql`（適用済み）。命名・
 - **機材名のインデント（「 ┗ 」）は`t_kizaihyou_row.indent_num`で持つ**。直前の機材とセットで使うもの（付属ケーブル等）を表す、kikikanの機材明細と同じ仕組み。値は0か1だけ（kikikanの実データも0/1しか無い）。記号そのものはkikikanの`m_dic`（`dic_id = 1`）にあるが、参照せず`app/_lib/equipment-table/sheet.ts`の`INDENT_CHARA`に同じ文字を置いている（表示のたびに他プロジェクトのマスタを引きに行かないため）。表示・Excel・PDFは`getIndentedName`を通す。
   - **親子は連動しない**。ドラッグで親だけ動かすと子は取り残されるし、先頭行にも付けられる。kikikan側にもチェックは無い（実データに、親のいない位置の`indent_num = 1`がある）ので、揃えて運用に委ねている。
   - 連携時は`t_juchu_kizai_meisai`と`t_nyushuko_den`の両方に同じ値を入れる（kikikanの既存データもそう揃っている）。
+- **機材表画面の「機材追加」は、kikikanの機材明細画面の「機材追加」（`EqptSelectionDialog`）と同じ操作にしている**（`app/equipment-table/_ui/kizai-add-dialog.tsx`）。部門／キーワードで機材を複数選ぶ→機材表にある機材なら1件ずつ重複確認→セットオプション（kikikanの`m_kizai_set`）がある機材は付属品を選ばせる（「別セット選択」で同じ機材をもう1セット）→kikikanの表示順に並べて、入力のある最後の行の直後に差し込む（付属品はインデント1、種類は部門名、数量は空）。
+  - 機材・部門の一覧は機材表画面が読み込み済みのもの（`fetchKizaiOptions`／`fetchKizaiKindOptions`）を使い、キーワード検索も画面内で絞る。kikikanへ取りに行くのはセットオプションだけで、確定時に選んだ機材の分をまとめて1回取る（`fetchKizaiSetOptions`）。付属品の名前は、kikikanに合わせて非表示・コンテナの機材も含む`v_kizai_lst`から引く。
 - **機材表申請依頼画面は「未対応」「対応済み」の2タブ**。承認すると申請中でなくなって未対応から消えるため、そのままだと承認後の追跡（とくに機材管理への連携が済んだか）ができなくなる。別画面を作らずタブで足している。
   - 「未対応」＝申請中かつ自分が申請先。「対応済み」＝**受注部の誰かが承認・差戻しした機材表**（`fetchApprovalHandledList`）。申請先は複数指定でき1人の承認で成立する運用なので、他の担当者が承認した案件の連携失敗も拾えるよう自分の対応分に限定していない。
   - 対応済みの判定は`t_kizaihyou_tanto`ではなく**操作履歴**（`act_cod`が承認・差戻し）で行う。申請先は再申請のたびに入れ直されるため、担当者で辿ると過去の対応が消える。横断で引くので`t_kizaihyou_his (act_cod, his_id desc)`にインデックスを張ってある。

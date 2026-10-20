@@ -39,6 +39,20 @@ export type KizaiOption = {
   kizaiNam: string;
   /** kikikanのm_kizai.bumon_id。「種類」で候補を絞るのに使う */
   bumonId: number | null;
+  /** 在庫場所の名前（KICS / YARD など）。機材追加ダイアログに出す */
+  shozokuNam: string;
+  /** kikikanのkizai_grp_cod。機材追加ダイアログでグループの区切り線を引くのに使う */
+  kizaiGrpCod: number | null;
+};
+
+/** 機材追加ダイアログで選べるセットオプション（付属品）1件 */
+export type KizaiSetOption = {
+  kizaiId: number;
+  kizaiNam: string;
+  bumonId: number | null;
+  shozokuNam: string;
+  /** kikikanのkizai_grp_cod。ダイアログでグループの区切り線を引くのに使う */
+  kizaiGrpCod: number | null;
 };
 
 /** 「種類」欄の候補（kikikanの部門マスタ由来） */

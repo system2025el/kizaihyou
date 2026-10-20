@@ -19,6 +19,7 @@ import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import DownloadIcon from '@mui/icons-material/Download';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import ForumIcon from '@mui/icons-material/Forum';
+import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import SaveIcon from '@mui/icons-material/Save';
@@ -63,7 +64,7 @@ import {
   exportEquipmentTablePdf,
   saveEquipmentTable,
 } from '@/app/_lib/equipment-table/funcs';
-import { getActiveSum, getTotal } from '@/app/_lib/equipment-table/sheet';
+import { getActiveSum, getTotal, hasEquipmentRowContent } from '@/app/_lib/equipment-table/sheet';
 import { BumonOption, EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
 import { validateForRequest } from '@/app/_lib/equipment-table/validation';
 import {
@@ -82,6 +83,8 @@ import {
 } from '@/app/_lib/equipment-table-list/types';
 import { EquipmentTimeline } from '@/app/_ui/equipment-timeline';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
+
+import KizaiAddDialog, { AddedKizai } from './kizai-add-dialog';
 
 /** 未保存の行・列に付ける一時id。保存するとDBの採番したidに置き換わる */
 let tempIdCounter = 0;
@@ -459,6 +462,7 @@ const EquipmentTable = ({
   const [tantoUserIds, setTantoUserIds] = useState<string[]>(detail?.tantoUserIds ?? []);
   const [requestComment, setRequestComment] = useState('');
   const [timelineOpen, setTimelineOpen] = useState(true);
+  const [kizaiAddOpen, setKizaiAddOpen] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const kindOptions = useMemo(
@@ -502,6 +506,39 @@ const EquipmentTable = ({
   const requestErrors = useMemo(() => validateForRequest(head, rows), [head, rows]);
 
   const addRow = () => setRows((prev) => [...prev, createRow()]);
+
+  // 機材追加ダイアログの重複確認に使う
+  const existingKizaiIds = useMemo(() => rows.flatMap((row) => (row.kizaiId === null ? [] : [row.kizaiId])), [rows]);
+  const bumonNamById = useMemo(
+    () => new Map(kizaiKindOptions.map((bumon) => [bumon.bumonId, bumon.bumonNam])),
+    [kizaiKindOptions]
+  );
+
+  /**
+   * 機材追加ダイアログで選んだ機材を行として足す。
+   * 機材表は空行が並んだ状態で開くので、末尾に足すと空行の下に入って見失う。
+   * 入力のある最後の行の直後に差し込み、残りの空行はその下に残す。
+   * 種類は機材の部門名を入れる（「種類」欄で選んだときと同じ値）。
+   */
+  const addKizaiRows = (kizai: AddedKizai[]) => {
+    setKizaiAddOpen(false);
+    if (!kizai.length) return;
+    setRows((prev) => {
+      let lastIndex = -1;
+      prev.forEach((row, index) => {
+        if (hasEquipmentRowContent(row)) lastIndex = index;
+      });
+      const added = kizai.map((item) => ({
+        ...createRow(),
+        kind: item.bumonId === null ? '' : (bumonNamById.get(item.bumonId) ?? ''),
+        kizaiId: item.kizaiId,
+        name: item.kizaiNam,
+        indent: item.indent,
+      }));
+      return [...prev.slice(0, lastIndex + 1), ...added, ...prev.slice(lastIndex + 1)];
+    });
+    setMessage(`機材を${kizai.length}行追加しました。`);
+  };
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
 
   const addColumn = () => setColumns((prev) => [...prev, createColumn('')]);
@@ -738,6 +775,9 @@ const EquipmentTable = ({
             <Chip label={status} size="small" />
           </Box>
           <Box display="flex" gap={1}>
+            <Button startIcon={<LibraryAddIcon />} onClick={() => setKizaiAddOpen(true)} disabled={readOnly}>
+              機材追加
+            </Button>
             <Button startIcon={<AddIcon />} onClick={addRow} disabled={readOnly}>
               行を追加
             </Button>
@@ -1046,6 +1086,15 @@ const EquipmentTable = ({
             </Button>
           </DialogActions>
         </Dialog>
+
+        <KizaiAddDialog
+          open={kizaiAddOpen}
+          kizaiOptions={kizaiOptions}
+          bumonOptions={kizaiKindOptions}
+          existingKizaiIds={existingKizaiIds}
+          onClose={() => setKizaiAddOpen(false)}
+          onConfirm={addKizaiRows}
+        />
 
         <Dialog open={requestOpen} onClose={() => setRequestOpen(false)} fullWidth maxWidth="xs">
           <DialogTitle fontSize="medium">機材表を申請する</DialogTitle>

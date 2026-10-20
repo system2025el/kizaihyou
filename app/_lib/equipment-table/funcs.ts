@@ -3,6 +3,7 @@
 import { requireCurrentUser } from '../auth/funcs';
 import { selectKikikanBumonList } from '../db/kikikan/m-bumon';
 import { selectKikikanKizaiList } from '../db/kikikan/m-kizai';
+import { selectKikikanKizaiLstByIds, selectKikikanKizaiSetList } from '../db/kikikan/m-kizai-set';
 import {
   insertKizaihyou,
   KizaihyouContentInput,
@@ -29,7 +30,14 @@ import { formatDateTime } from '../format';
 import { buildEquipmentTableDiff, EquipmentTableDiff, hasDiff } from './diff';
 import { buildKizaihyouExcel, buildKizaihyouExcelFileName } from './excel';
 import { buildKizaihyouPdf, buildKizaihyouPdfFileName } from './pdf';
-import { BumonOption, EquipmentColumn, EquipmentRow, EquipmentTableSnapshot, KizaiOption } from './types';
+import {
+  BumonOption,
+  EquipmentColumn,
+  EquipmentRow,
+  EquipmentTableSnapshot,
+  KizaiOption,
+  KizaiSetOption,
+} from './types';
 
 export type EquipmentTableDetail = {
   id: number;
@@ -551,7 +559,54 @@ export const fetchKizaiOptions = async (): Promise<KizaiOption[]> => {
     kizaiId: kizai.kizai_id,
     kizaiNam: kizai.kizai_nam,
     bumonId: kizai.bumon_id,
+    shozokuNam: kizai.shozoku_nam ?? '',
+    kizaiGrpCod: kizai.kizai_grp_cod,
   }));
+};
+
+/**
+ * 機材追加ダイアログで選んだ親機材のセットオプション（付属品）を取得する関数。
+ *
+ * kikikanの機材追加ダイアログと同じく`m_kizai_set`を見る。
+ * セットオプションが無い機材はキー自体を返さないので、呼び出し側はキーの有無で
+ * 「付属品を選ばせる機材か」を判定できる。
+ *
+ * @param kizaiIds 選んだ親機材のkizai_id
+ * @returns 親機材ID → 付属品の一覧（kikikanの表示順）
+ */
+export const fetchKizaiSetOptions = async (kizaiIds: number[]): Promise<Record<number, KizaiSetOption[]>> => {
+  await requireCurrentUser();
+  if (!kizaiIds.length) return {};
+
+  const { data: sets, error } = await selectKikikanKizaiSetList(kizaiIds);
+  if (error) throw new Error(`[fetchKizaiSetOptions] kikikanのセットマスタ取得に失敗しました: ${error.message}`);
+  if (!sets?.length) return {};
+
+  const { data: kizaiList, error: kizaiError } = await selectKikikanKizaiLstByIds(
+    Array.from(new Set(sets.map((set) => set.set_kizai_id)))
+  );
+  if (kizaiError)
+    throw new Error(`[fetchKizaiSetOptions] kikikanの機材マスタ取得に失敗しました: ${kizaiError.message}`);
+
+  // 付属品はkikikanの表示順で並べたいので、機材一覧（表示順に取得済み）を基準に親へ振り分ける
+  const parentIdsBySetId = new Map<number, number[]>();
+  for (const set of sets) {
+    parentIdsBySetId.set(set.set_kizai_id, [...(parentIdsBySetId.get(set.set_kizai_id) ?? []), set.kizai_id]);
+  }
+
+  const result: Record<number, KizaiSetOption[]> = {};
+  for (const kizai of kizaiList ?? []) {
+    for (const parentId of parentIdsBySetId.get(kizai.kizai_id) ?? []) {
+      (result[parentId] ??= []).push({
+        kizaiId: kizai.kizai_id,
+        kizaiNam: kizai.kizai_nam,
+        bumonId: kizai.bumon_id,
+        shozokuNam: kizai.shozoku_nam ?? '',
+        kizaiGrpCod: kizai.kizai_grp_cod,
+      });
+    }
+  }
+  return result;
 };
 
 /**
