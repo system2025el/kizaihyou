@@ -11,6 +11,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import AddIcon from '@mui/icons-material/Add';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -40,6 +41,10 @@ import {
   DialogTitle,
   Divider,
   IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Paper,
   Snackbar,
   Table,
@@ -115,7 +120,10 @@ const createRow = (): EquipmentRow => ({
   qty: {},
 });
 
-const createColumn = (label: string): EquipmentColumn => ({ id: createTempId('col'), label });
+const createColumn = (label: string): EquipmentColumn => ({
+  id: createTempId('col'),
+  label,
+});
 
 /** まだ保存していない機材表の初期値 */
 const EMPTY_HEAD: EquipmentTableHead = {
@@ -253,6 +261,10 @@ type EquipmentRowViewProps = {
   onUpdateRow: (patch: Partial<EquipmentRow>) => void;
   onUpdateQty: (columnId: string, value: string) => void;
   onRemoveRow: () => void;
+  /** この行の直下に機材追加ダイアログで選んだ機材を入れる */
+  onAddKizaiBelow: () => void;
+  /** この行の直下に空行を1行入れる */
+  onInsertRowBelow: () => void;
 };
 
 const EquipmentRowView = ({
@@ -266,7 +278,10 @@ const EquipmentRowView = ({
   onUpdateRow,
   onUpdateQty,
   onRemoveRow,
+  onAddKizaiBelow,
+  onInsertRowBelow,
 }: EquipmentRowViewProps) => {
+  const [insertMenuAnchor, setInsertMenuAnchor] = useState<HTMLElement | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: toRowDragId(row.id),
     disabled: readOnly,
@@ -301,9 +316,41 @@ const EquipmentRowView = ({
               >
                 <DragIndicatorIcon fontSize="small" />
               </IconButton>
+              <IconButton
+                size="small"
+                onClick={(e) => setInsertMenuAnchor(e.currentTarget)}
+                title="この行の下に追加"
+                aria-haspopup="menu"
+              >
+                <AddCircleOutlineIcon fontSize="small" />
+              </IconButton>
               <IconButton size="small" onClick={onRemoveRow} title="行を削除">
                 <DeleteIcon fontSize="small" />
               </IconButton>
+              <Menu anchorEl={insertMenuAnchor} open={!!insertMenuAnchor} onClose={() => setInsertMenuAnchor(null)}>
+                <MenuItem
+                  onClick={() => {
+                    setInsertMenuAnchor(null);
+                    onAddKizaiBelow();
+                  }}
+                >
+                  <ListItemIcon>
+                    <LibraryAddIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText primary="この下に機材を追加" />
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setInsertMenuAnchor(null);
+                    onInsertRowBelow();
+                  }}
+                >
+                  <ListItemIcon>
+                    <AddIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText primary="この下に空行を挿入" />
+                </MenuItem>
+              </Menu>
             </>
           )}
         </Box>
@@ -462,7 +509,13 @@ const EquipmentTable = ({
   const [tantoUserIds, setTantoUserIds] = useState<string[]>(detail?.tantoUserIds ?? []);
   const [requestComment, setRequestComment] = useState('');
   const [timelineOpen, setTimelineOpen] = useState(true);
-  const [kizaiAddOpen, setKizaiAddOpen] = useState(false);
+  /**
+   * 機材追加ダイアログを開いているか。afterRowIdはその行の直下に入れる（行の「＋」から開いた場合）。
+   * nullなら上部のボタンから開いた場合で、入力のある最後の行の直後に入れる
+   */
+  const [kizaiAddTarget, setKizaiAddTarget] = useState<{
+    afterRowId: string | null;
+  } | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const kindOptions = useMemo(
@@ -515,19 +568,24 @@ const EquipmentTable = ({
   );
 
   /**
-   * 機材追加ダイアログで選んだ機材を行として足す。
-   * 機材表は空行が並んだ状態で開くので、末尾に足すと空行の下に入って見失う。
-   * 入力のある最後の行の直後に差し込み、残りの空行はその下に残す。
-   * 種類は機材の部門名を入れる（「種類」欄で選んだときと同じ値）。
+   * 機材追加ダイアログで選んだ機材を行として足す。種類は機材の部門名を入れる（「種類」欄で選んだときと同じ値）。
+   *
+   * 行の「＋」から開いた場合はその行の直下に入れる。
+   * 上部のボタンから開いた場合は、入力のある最後の行の直後に入れる。機材表は空行が並んだ状態で
+   * 開くので、末尾に足すと空行の下に入って見失うため。残りの空行はその下に残す。
    */
   const addKizaiRows = (kizai: AddedKizai[]) => {
-    setKizaiAddOpen(false);
+    const afterRowId = kizaiAddTarget?.afterRowId ?? null;
+    setKizaiAddTarget(null);
     if (!kizai.length) return;
     setRows((prev) => {
-      let lastIndex = -1;
-      prev.forEach((row, index) => {
-        if (hasEquipmentRowContent(row)) lastIndex = index;
-      });
+      // ダイアログを開いている間に対象の行が消えることは無いが、念のため見つからなければ既定の位置にする
+      let lastIndex = afterRowId === null ? -1 : prev.findIndex((row) => row.id === afterRowId);
+      if (lastIndex === -1) {
+        prev.forEach((row, index) => {
+          if (hasEquipmentRowContent(row)) lastIndex = index;
+        });
+      }
       const added = kizai.map((item) => ({
         ...createRow(),
         kind: item.bumonId === null ? '' : (bumonNamById.get(item.bumonId) ?? ''),
@@ -540,6 +598,11 @@ const EquipmentTable = ({
     setMessage(`機材を${kizai.length}行追加しました。`);
   };
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
+  const insertRowBelow = (id: string) =>
+    setRows((prev) => {
+      const index = prev.findIndex((row) => row.id === id);
+      return [...prev.slice(0, index + 1), createRow(), ...prev.slice(index + 1)];
+    });
 
   const addColumn = () => setColumns((prev) => [...prev, createColumn('')]);
   const removeColumn = (id: string) => {
@@ -775,7 +838,11 @@ const EquipmentTable = ({
             <Chip label={status} size="small" />
           </Box>
           <Box display="flex" gap={1}>
-            <Button startIcon={<LibraryAddIcon />} onClick={() => setKizaiAddOpen(true)} disabled={readOnly}>
+            <Button
+              startIcon={<LibraryAddIcon />}
+              onClick={() => setKizaiAddTarget({ afterRowId: null })}
+              disabled={readOnly}
+            >
               機材追加
             </Button>
             <Button startIcon={<AddIcon />} onClick={addRow} disabled={readOnly}>
@@ -923,7 +990,10 @@ const EquipmentTable = ({
                 onChange={(e) => setHead({ ...head, shippedAt: e.target.value })}
                 size="small"
                 type="date"
-                slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
+                slotProps={{
+                  inputLabel: { shrink: true },
+                  input: { readOnly },
+                }}
               />
               <TextField
                 label="入庫日"
@@ -931,7 +1001,10 @@ const EquipmentTable = ({
                 onChange={(e) => setHead({ ...head, returnedAt: e.target.value })}
                 size="small"
                 type="date"
-                slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
+                slotProps={{
+                  inputLabel: { shrink: true },
+                  input: { readOnly },
+                }}
               />
               <TextField
                 label="備考"
@@ -947,7 +1020,7 @@ const EquipmentTable = ({
               <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ minWidth: 130 }} />
+                    <TableCell sx={{ minWidth: 165 }} />
                     <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
                     <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
                     <TableCell align="center" sx={{ minWidth: 60 }}>
@@ -990,6 +1063,8 @@ const EquipmentTable = ({
                         onUpdateRow={(patch) => updateRow(row.id, patch)}
                         onUpdateQty={(columnId, value) => updateQty(row.id, columnId, value)}
                         onRemoveRow={() => removeRow(row.id)}
+                        onAddKizaiBelow={() => setKizaiAddTarget({ afterRowId: row.id })}
+                        onInsertRowBelow={() => insertRowBelow(row.id)}
                       />
                     ))}
                   </SortableContext>
@@ -1088,11 +1163,11 @@ const EquipmentTable = ({
         </Dialog>
 
         <KizaiAddDialog
-          open={kizaiAddOpen}
+          open={!!kizaiAddTarget}
           kizaiOptions={kizaiOptions}
           bumonOptions={kizaiKindOptions}
           existingKizaiIds={existingKizaiIds}
-          onClose={() => setKizaiAddOpen(false)}
+          onClose={() => setKizaiAddTarget(null)}
           onConfirm={addKizaiRows}
         />
 
