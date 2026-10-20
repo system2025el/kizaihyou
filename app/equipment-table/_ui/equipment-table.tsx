@@ -120,10 +120,7 @@ const createRow = (): EquipmentRow => ({
   qty: {},
 });
 
-const createColumn = (label: string): EquipmentColumn => ({
-  id: createTempId('col'),
-  label,
-});
+const createColumn = (label: string): EquipmentColumn => ({ id: createTempId('col'), label });
 
 /** まだ保存していない機材表の初期値 */
 const EMPTY_HEAD: EquipmentTableHead = {
@@ -198,6 +195,45 @@ const toSnapshot = (head: EquipmentTableHead, columns: EquipmentColumn[], rows: 
     })),
   });
 
+/**
+ * SPAREから左の列。横スクロールしても左に固定する（ポジションの列が多いと、
+ * どの機材の行を見ているのか分からなくなるため）。
+ * position: stickyでずらす量（left）を決めるには各列の幅が確定している必要があるので、
+ * 幅はminWidthではなく固定値にする。
+ */
+// SPAREは入力欄（56px）とセルの左右の余白が収まる幅にする。余白の既定（16pxずつ）のままだと
+// 入力欄が列の外へはみ出し、固定列の境目の線をまたいでしまう
+const FIXED_COLUMN_WIDTHS = [165, 140, 220, 60, 70, 70, 80] as const;
+const FIXED_COLUMN_LEFTS = FIXED_COLUMN_WIDTHS.map((_width, index) =>
+  FIXED_COLUMN_WIDTHS.slice(0, index).reduce((sum, width) => sum + width, 0)
+);
+const LAST_FIXED_COLUMN = FIXED_COLUMN_WIDTHS.length - 1;
+
+/**
+ * 固定列のセルに付けるsx。
+ * 背景色を付けないと、後ろをスクロールしていくポジションの列が透けて見える。
+ * z-indexは、本体の固定列(1) < 見出しの行(stickyHeaderの2・ドラッグ中の列見出し3) < 見出しの固定列(4)。
+ * 見出しの固定列は縦横どちらにスクロールしても一番上に来る必要がある。
+ */
+const fixedCellSx = (index: number, header = false) => ({
+  position: 'sticky',
+  left: FIXED_COLUMN_LEFTS[index],
+  width: FIXED_COLUMN_WIDTHS[index],
+  minWidth: FIXED_COLUMN_WIDTHS[index],
+  maxWidth: FIXED_COLUMN_WIDTHS[index],
+  zIndex: header ? 4 : 1,
+  bgcolor: 'background.paper',
+  // 固定列とスクロールする列の境目が分かるよう、最後の固定列の右に線を引く
+  ...(index === LAST_FIXED_COLUMN && { borderRight: 1, borderRightColor: 'divider' }),
+});
+
+/** 数量（SPARE・各ポジション）の入力欄。数字なので右寄せにする */
+const QTY_INPUT_SX = { '& input': { textAlign: 'right' } } as const;
+
+/** 列名の入力欄の幅。空欄・短い名前は最小幅（数量の入力欄に近い幅）、長すぎる名前は最大幅で止める */
+const COLUMN_LABEL_MIN_WIDTH = 76;
+const COLUMN_LABEL_MAX_WIDTH = 240;
+
 type ColumnHeaderCellProps = {
   column: EquipmentColumn;
   readOnly: boolean;
@@ -215,7 +251,7 @@ const ColumnHeaderCell = ({ column, readOnly, onLabelChange, onRemove }: ColumnH
     <TableCell
       ref={setNodeRef}
       sx={{
-        minWidth: 110,
+        px: 0.5,
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.6 : 1,
@@ -225,21 +261,61 @@ const ColumnHeaderCell = ({ column, readOnly, onLabelChange, onRemove }: ColumnH
         bgcolor: 'background.paper',
       }}
     >
-      <Box display="flex" alignItems="center" gap={0.5}>
+      <Box display="flex" alignItems="center">
         {!readOnly && (
-          <IconButton size="small" sx={{ cursor: 'grab' }} title="ドラッグで並び替え" {...attributes} {...listeners}>
+          <IconButton
+            size="small"
+            sx={{ cursor: 'grab', p: 0.25 }}
+            title="ドラッグで並び替え"
+            {...attributes}
+            {...listeners}
+          >
             <DragIndicatorIcon fontSize="small" />
           </IconButton>
         )}
-        <TextField
-          value={column.label}
-          onChange={(e) => onLabelChange(e.target.value)}
-          variant="standard"
-          size="small"
-          slotProps={{ input: { readOnly } }}
-        />
+        {/*
+          入力欄の幅を列名の長さに合わせる。入力欄（input）は中身に合わせて伸び縮みしないので、
+          同じ文字を見えない状態で同じマス（grid-area）に重ね、そのマスの幅に入力欄を合わせる。
+          空欄や短い名前は数量の入力欄に近い幅（最小）、長すぎる名前は最大幅で止める
+          （止まった名前はマウスを載せると全体が見える）。
+        */}
+        <Box
+          sx={{
+            display: 'inline-grid',
+            minWidth: COLUMN_LABEL_MIN_WIDTH,
+            maxWidth: COLUMN_LABEL_MAX_WIDTH,
+            '& > *': { gridArea: '1 / 1' },
+          }}
+        >
+          <Box
+            component="span"
+            aria-hidden
+            sx={{
+              typography: 'body1',
+              whiteSpace: 'pre',
+              visibility: 'hidden',
+              overflow: 'hidden',
+              height: 0,
+              // カーソルの分だけ余裕を持たせる
+              pr: 0.5,
+            }}
+          >
+            {column.label}
+          </Box>
+          <TextField
+            value={column.label}
+            onChange={(e) => onLabelChange(e.target.value)}
+            variant="standard"
+            size="small"
+            title={column.label}
+            fullWidth
+            // inputは既定でsize=20相当（約180px）の幅を主張し、マスの幅を押し広げてしまう。
+            // 1にして、幅を見えない文字の側だけで決まるようにする
+            slotProps={{ input: { readOnly }, htmlInput: { size: 1 } }}
+          />
+        </Box>
         {!readOnly && (
-          <IconButton size="small" onClick={onRemove} title="列を削除">
+          <IconButton size="small" onClick={onRemove} title="列を削除" sx={{ p: 0.25 }}>
             <DeleteIcon fontSize="small" />
           </IconButton>
         )}
@@ -300,9 +376,14 @@ const EquipmentRowView = ({
         '&:hover .indent-toggle': { opacity: 1 },
       }}
     >
-      <TableCell>
+      <TableCell sx={fixedCellSx(0)}>
         <Box display="flex" alignItems="center" gap={0.5}>
-          <Typography variant="caption" color="text.secondary">
+          {/* 桁数で後ろのアイコンがずれないよう、3桁分の幅を取って右寄せにする（行数は3桁まで） */}
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ width: '3ch', flexShrink: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+          >
             {index + 1}
           </Typography>
           {!readOnly && (
@@ -355,7 +436,7 @@ const EquipmentRowView = ({
           )}
         </Box>
       </TableCell>
-      <TableCell>
+      <TableCell sx={fixedCellSx(1)}>
         <Autocomplete
           freeSolo
           readOnly={readOnly}
@@ -371,7 +452,7 @@ const EquipmentRowView = ({
           renderInput={(params) => <TextField {...params} variant="standard" />}
         />
       </TableCell>
-      <TableCell>
+      <TableCell sx={fixedCellSx(2)}>
         <Box display="flex" alignItems="center" gap={0.5}>
           {readOnly ? (
             <Box width={INDENT_SLOT_WIDTH} textAlign="center" color="text.secondary" fontSize={13}>
@@ -429,7 +510,7 @@ const EquipmentRowView = ({
           />
         </Box>
       </TableCell>
-      <TableCell align="center">
+      <TableCell sx={fixedCellSx(3)} align="center">
         <MemoTooltip
           title={row.name || '備考'}
           memo={row.remark}
@@ -437,32 +518,32 @@ const EquipmentRowView = ({
           onSave={(remark) => onUpdateRow({ remark })}
         />
       </TableCell>
-      <TableCell>
+      <TableCell align="right" sx={fixedCellSx(4)}>
         <Typography variant="body2">{getTotal(row)}</Typography>
       </TableCell>
-      <TableCell>
+      <TableCell align="right" sx={fixedCellSx(5)}>
         <Typography variant="body2">{getActiveSum(row)}</Typography>
       </TableCell>
-      <TableCell>
+      <TableCell align="center" sx={{ ...fixedCellSx(6), px: 1 }}>
         <TextField
           value={row.spare}
           onChange={(e) => onUpdateRow({ spare: e.target.value })}
           variant="standard"
           size="small"
           type="number"
-          sx={{ width: 64 }}
+          sx={{ width: 56, ...QTY_INPUT_SX }}
           slotProps={{ input: { readOnly } }}
         />
       </TableCell>
       {columns.map((column) => (
-        <TableCell key={column.id}>
+        <TableCell key={column.id} align="center">
           <TextField
             value={row.qty[column.id] ?? ''}
             onChange={(e) => onUpdateQty(column.id, e.target.value)}
             variant="standard"
             size="small"
             type="number"
-            sx={{ width: 64 }}
+            sx={{ width: 64, ...QTY_INPUT_SX }}
             slotProps={{ input: { readOnly } }}
           />
         </TableCell>
@@ -513,9 +594,7 @@ const EquipmentTable = ({
    * 機材追加ダイアログを開いているか。afterRowIdはその行の直下に入れる（行の「＋」から開いた場合）。
    * nullなら上部のボタンから開いた場合で、入力のある最後の行の直後に入れる
    */
-  const [kizaiAddTarget, setKizaiAddTarget] = useState<{
-    afterRowId: string | null;
-  } | null>(null);
+  const [kizaiAddTarget, setKizaiAddTarget] = useState<{ afterRowId: string | null } | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const kindOptions = useMemo(
@@ -990,10 +1069,7 @@ const EquipmentTable = ({
                 onChange={(e) => setHead({ ...head, shippedAt: e.target.value })}
                 size="small"
                 type="date"
-                slotProps={{
-                  inputLabel: { shrink: true },
-                  input: { readOnly },
-                }}
+                slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
               />
               <TextField
                 label="入庫日"
@@ -1001,10 +1077,7 @@ const EquipmentTable = ({
                 onChange={(e) => setHead({ ...head, returnedAt: e.target.value })}
                 size="small"
                 type="date"
-                slotProps={{
-                  inputLabel: { shrink: true },
-                  input: { readOnly },
-                }}
+                slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
               />
               <TextField
                 label="備考"
@@ -1020,15 +1093,21 @@ const EquipmentTable = ({
               <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ minWidth: 165 }} />
-                    <TableCell sx={{ minWidth: 140 }}>種類</TableCell>
-                    <TableCell sx={{ minWidth: 220 }}>名称</TableCell>
-                    <TableCell align="center" sx={{ minWidth: 60 }}>
+                    <TableCell sx={fixedCellSx(0, true)} />
+                    <TableCell sx={fixedCellSx(1, true)}>種類</TableCell>
+                    <TableCell sx={fixedCellSx(2, true)}>名称</TableCell>
+                    <TableCell align="center" sx={fixedCellSx(3, true)}>
                       備考
                     </TableCell>
-                    <TableCell sx={{ minWidth: 70 }}>TOTAL</TableCell>
-                    <TableCell sx={{ minWidth: 70 }}>ACTIVE</TableCell>
-                    <TableCell sx={{ minWidth: 70 }}>SPARE</TableCell>
+                    <TableCell align="right" sx={fixedCellSx(4, true)}>
+                      TOTAL
+                    </TableCell>
+                    <TableCell align="right" sx={fixedCellSx(5, true)}>
+                      ACTIVE
+                    </TableCell>
+                    <TableCell align="center" sx={{ ...fixedCellSx(6, true), px: 1 }}>
+                      SPARE
+                    </TableCell>
                     <SortableContext
                       items={columns.map((column) => toColumnDragId(column.id))}
                       strategy={horizontalListSortingStrategy}

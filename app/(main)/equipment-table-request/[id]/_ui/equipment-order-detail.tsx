@@ -441,6 +441,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                   機材名
                 </TableCell>
                 <TableCell
+                  align="right"
                   sx={{
                     position: 'sticky',
                     left: STICKY_LEFT.total,
@@ -452,6 +453,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                   合計
                 </TableCell>
                 <TableCell
+                  align="right"
                   sx={{
                     position: 'sticky',
                     left: STICKY_LEFT.ordered,
@@ -463,6 +465,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                   受注
                 </TableCell>
                 <TableCell
+                  align="right"
                   sx={{
                     position: 'sticky',
                     left: STICKY_LEFT.spare,
@@ -487,7 +490,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                 {dateList.map((date) => (
                   <TableCell
                     key={date.getTime()}
-                    align="center"
+                    align="right"
                     sx={{ minWidth: 56, color: isInRange(date) ? 'primary.main' : 'text.primary' }}
                   >
                     {formatMd(date)}
@@ -534,11 +537,13 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                       )}
                     </TableCell>
                     <TableCell
+                      align="right"
                       sx={{ position: 'sticky', left: STICKY_LEFT.total, zIndex: 1, bgcolor: TOTAL_COLUMN_COLOR }}
                     >
                       {total}
                     </TableCell>
                     <TableCell
+                      align="right"
                       sx={{ position: 'sticky', left: STICKY_LEFT.ordered, zIndex: 1, bgcolor: 'background.paper' }}
                     >
                       <TextField
@@ -549,7 +554,8 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                         variant="standard"
                         size="small"
                         type="number"
-                        sx={{ width: 56 }}
+                        // 数字なので入力欄の中も右寄せにする
+                        sx={{ width: 56, '& input': { textAlign: 'right' } }}
                       />
                       {previousQty(row) && (
                         <Typography variant="caption" color="warning.main" display="block">
@@ -558,6 +564,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                       )}
                     </TableCell>
                     <TableCell
+                      align="right"
                       sx={{ position: 'sticky', left: STICKY_LEFT.spare, zIndex: 1, bgcolor: 'background.paper' }}
                     >
                       <TextField
@@ -568,7 +575,8 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                         variant="standard"
                         size="small"
                         type="number"
-                        sx={{ width: 56 }}
+                        // 数字なので入力欄の中も右寄せにする
+                        sx={{ width: 56, '& input': { textAlign: 'right' } }}
                       />
                       {previousQty(row) && (
                         <Typography variant="caption" color="warning.main" display="block">
@@ -590,7 +598,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                       return (
                         <TableCell
                           key={date.getTime()}
-                          align="center"
+                          align="right"
                           sx={{
                             bgcolor: getCellColor(date),
                             color: stock !== null && stock < 0 ? 'error.main' : 'text.primary',
