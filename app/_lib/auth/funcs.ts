@@ -45,6 +45,22 @@ export const ensureCurrentUser = async (): Promise<CurrentUser | null> => {
 };
 
 /**
+ * ログアウトする関数。
+ *
+ * セッションCookieはmiddleware・サーバー側クライアントが`httpOnly`で付け直しているため、
+ * ブラウザ側の`supabase.auth.signOut()`では消せない。サーバー側で消す。
+ *
+ * `scope: 'local'`にしているのは、この端末のセッションだけを終わらせるため。
+ * 既定の`global`だと同じアカウントの全端末のセッションが切れる（仮アカウントを複数人で
+ * 使っている今は、他の人まで巻き込んでログアウトさせてしまう）。
+ */
+export const signOut = async () => {
+  const supabase = await createClient();
+  const { error } = await supabase.auth.signOut({ scope: 'local' });
+  if (error) throw new Error(`[signOut] ログアウトに失敗しました: ${error.message}`);
+};
+
+/**
  * ログイン必須の処理から呼ぶ関数。未ログインなら例外を投げる。
  * @returns ログイン中のユーザー
  */
