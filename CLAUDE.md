@@ -30,7 +30,9 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
   - 機材表の行が手入力の名称（`kizai_id`がnull）だと在庫を引けないので、在庫欄は`-`で表示する。
 - **kikikanのマスタ参照**: 機材表の「名称」はkikikanの機材マスタ`m_kizai`を、「種類」は部門マスタ`m_bumon`を参照する（種類は入力補助だけで、`t_kizaihyou_row.kizai_kind`はテキストしか持たず部門IDは保持しない）。接続は`app/_lib/db/kikikan/`配下（`KIKIKAN_*`環境変数）。**kikikanのservice_roleキーは`permission denied for schema public`になり使えない**（kikikan側でschema publicへのGRANTが無い）ため、anonキーで参照している。anonキーとはいえ他プロジェクトの認証情報なので`NEXT_PUBLIC_`を付けず、Server Actionsからのみ使うこと。別Postgresインスタンスなので外部キー制約は張れず、`t_kizaihyou_row.kizai_id`に値のみ保持し整合性はアプリ側で担保する。
 - **Auth**: kikikanとは完全に別。同じ人間でもkikikanとkizaihyouでユーザーレコード（UUID）は別になる。将来、受注部担当者などのデータをkikikan側の担当者マスタと突き合わせる場合は、UUIDではなくメールアドレス等の別キーで名寄せする設計が必要。
-- **kikikanへの受注連携（未実装）**: 承認済みの機材表からkikikanの受注伝票・受注機材明細を作る構想がある。必要なテーブル・項目の対応、kizaihyouに足りない情報、採番や権限の制約は`docs/kikikan-juchu-renkei.md`に整理してある。**現時点でkikikanへの書き込みは一切していない**（参照のみ）。
+- **kikikanへの受注連携（承認時に書き込む）**: 受注部が承認すると、kikikanに受注ヘッダー（伝票）と受注機材ヘッダー・入出庫・使用日カレンダー・機材明細・作業伝票・移動伝票を作る（`app/_lib/db/kikikan/t-juchu-head.ts`・`t-juchu-kizai.ts`、kikikanのコピー作成`juchuMeisaiCopy`と同じ構成）。複数テーブルを1トランザクションで入れるため、書き込みはPostgresへの直接接続（`KIKIKAN_DATABASE_URL`）を使う。別インスタンスで単一トランザクションを組めないので、**承認を先に確定させ、連携が失敗しても承認は取り消さない**（成否は操作履歴に残し、承認画面の再連携ボタンでやり直す）。設計の経緯は`docs/kikikan-juchu-renkei.md`、再申請の内容を機材明細へ反映する件（第1段＝参照専用の下見のみ実装済み）は`docs/saishinsei-hanei.md`。
+  - **kikikanのリポジトリにはkizaihyouから書き込まれていることが書かれていない**。kikikan側の変更（テーブル定義・採番・移動や本番日の仕組み）で連携が壊れうるので、kikikanを更新したら`C:\EL\scripts\README.md`のDB変更記録と照らし合わせること。
+  - 既知の差：kikikanは新しい受注機材ヘッダーを作るとき本番日テンプレート（`t_juchu_kizai_honbanbi`の`juchu_kizai_head_id = 0`の行）を展開して本番日数を計算するが、こちらは展開せず本番日数0で入れている（既存の受注に明細を足すときに差が出る。受注部が伝票画面で保存し直すと展開される）。
 - **将来のクロスプロジェクトアクセス**: kikikan（本番・ステージングともVercel上）からこのプロジェクトのDBを直接参照・更新する構想がある。技術的には(a) kikikan側にこのプロジェクト用の`DATABASE_URL`・Supabase-jsクライアントをもう1組追加、(b) このプロジェクト側でkikikanから参照される想定のテーブルに適切なRLSポリシーを設定、で実現可能。ただし2つの別Postgresインスタンスにまたがる単一トランザクションは組めない点に注意（アプリ側で部分失敗のハンドリングを設計する）。
 - **IPv4アドオン**: このプロジェクトは新しい方式で作成されているため、Postgresへの直接接続（`app/_lib/db/postgres.ts`のpg Pool、ポート6543）はデフォルトでIPv6のみ。IPv4のみのネットワーク（このリポジトリの開発環境を含む）から接続するには、SupabaseダッシュボードでIPv4アドオン（有料、月$4程度）を有効化する必要がある（本プロジェクトでは有効化済み）。Supabase-js経由のアクセス（PostgREST、ポート443のHTTPS）はこの制約を受けず、アドオン無しでも常に接続可能。
 - **マイグレーション**: DDLは`.mcp.json`のSupabase MCP（`apply_migration`）で適用し、同じSQLを`scripts/db-migration/*.sql`にも残す（kikikanの`scripts/db-migration/`と同じ運用）。適用後は`get_advisors`でRLS漏れ等を確認する。
@@ -95,7 +97,7 @@ DDLは`scripts/db-migration/01-init-kizaihyou.sql`（適用済み）。命名・
 | `t_kizaihyou_lock`   | 編集ロック（1機材表に1行）。`expire_dat`を過ぎたものは切れていて他の人が取れる                                                                                                                           |
 | `t_kizaihyou_his`    | 操作履歴兼タイムライン。`mem`にコメント、`snapshot`(jsonb)に保存・申請時点の機材表、`user_nam`は操作時点の氏名スナップショット                                                                           |
 
-- 公演名・場所・顧客名・出庫入庫日はkikikanの受注（`t_juchu_head`）とは切り離し、kizaihyou側で自前保持している。受注との紐付けは未実装。
+- 公演名・場所・顧客名・出庫入庫日はkikikanの受注（`t_juchu_head`）とは切り離し、kizaihyou側で自前保持している。承認時の連携で作った（または紐づけた）受注は`t_kizaihyou.juchu_head_id`・`juchu_kizai_head_id`で指す。
 - **申請先の受注部担当者は複数指定できる**。実体は`t_kizaihyou_tanto`で、`t_kizaihyou.tanto_nam`は一覧表示用に「、」で連結した非正規化の文字列。**そのうち1人が承認すれば承認済になる運用で、全員の承認は要らない**（誰が承認したかは`t_kizaihyou_his`に残る）。申請先は再申請のたびに入れ直す。
 - **受注部担当者と申請者＝依頼者（`shinsei_nam`・`shinsei_user_id`）は申請時に決まる**。依頼者は操作履歴の`act_nam`から判定することもできるが、文言を変えた瞬間に壊れるのでヘッダに持たせている（機材表申請依頼画面の「依頼者名」列がこれ）。同じ理由で、現在の申請にあたる操作履歴も`shinsei_his_id`でヘッダから直接指す。申請はこの3つとステータスをまとめて更新するので、履歴だけ入ってヘッダが指せていない状態を作らないよう`requestKizaihyou`でpg Poolのトランザクションにしている。機材表画面の「申請」でモーダルを出し、`juchu_tanto`権限を持つユーザーから選ばせる（`requestEquipmentTable`）。新規作成・コピー時には入れない（コピー元からも引き継がない）。画面から渡ったuser_idはサーバー側で権限を取り直して検証する。
 - **申請時に、機材管理へ連携する項目の文字数を連携先のカラムに合わせて確かめる**（`validateLengthForKikikan`。公演名・場所100文字、備考・行の備考200文字）。kizaihyou側は`text`で上限が無く、超えると承認後の連携が`value too long`で失敗するため。保存は止めない。承認時の連携直前にも同じチェックを、kikikanに何か書く前に通す（それより前に申請されたものの承認で、伝票だけできて明細で失敗する状態を作らないため）。kikikanのカラム定義が変わったら`KIKIKAN_MAX_LENGTH`も直すこと。
@@ -172,7 +174,7 @@ kikikanと同じ方式に揃える。
 
 - **本番になるDBに、開発中のテストデータとテスト用Authアカウントが残っている**。`test@example.com`（テスト太郎）や仮アドレスのユーザー、テスト用の機材表を消してから本番として使い始めること。
 - **新しい開発プロジェクトにはスキーマを作り直す必要がある**。`scripts/db-migration/01〜15`を順に流せば再現できる（マスタのINSERTも含む）。ただし`m_user`は`auth.users`へのFKがあるためSQLだけでは入らず、Admin APIでauthアカウントを作ってからプロファイルを入れる。
-- **`KIKIKAN_*`の向き先も見直すこと**。現状は開発環境からもkikikanの**本番**プロジェクトを参照している。参照のみなので今は実害がないが、受注連携（書き込み）を実装したら、開発環境はkikikanのステージングを向けないと本番データを壊す。
+- **`KIKIKAN_*`の向き先も見直すこと**。現状はローカルもVercelのプレビューもkikikanの**ステージング**（`jimqcvyaoddsxbcrsnfs`）を向いており、承認時の連携もステージングに書き込む。Vercelには`KIKIKAN_SUPABASE_URL`・`KIKIKAN_SUPABASE_ANON_KEY`に加えて`KIKIKAN_DATABASE_URL`も要る（無いと承認時の連携だけが`ECONNREFUSED 127.0.0.1:5432`で失敗する）。本番（`main`）に入れるときは、kikikanの本番とステージングのどちらへ書くかを決めてから設定すること。
 - **IPv4アドオン**は新しいプロジェクトでも有効化が要る（pg Poolでの直接接続を使う場合）。
 - `.mcp.json`のSupabase MCPは`project_ref`を直書きしているので、作業対象のプロジェクトに合わせて切り替える。
 - **このタイミングで公開範囲も閉じる**（開発中は検証しやすさを優先して開けてある）：GitHubリポジトリ`system2025el/kizaihyou`をPrivateにする、VercelのDeployment Protection（Vercel Authentication）を有効に戻す。開発中にオフにしているのは関係者にURLを渡して触ってもらうためで、アプリ自体はmiddlewareでログイン必須（サインアップ画面も無い）ため、オフでもデータは見えない。
