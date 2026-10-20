@@ -36,6 +36,10 @@ export const KIZAIHYOU_ACT = {
   /** 論理削除（del_flg = 1）。ステータスは変えない */
   削除: 12,
   復元: 13,
+  /** メンバーの招待・権限変更・外す（act_namに誰をどうしたか） */
+  メンバー変更: 14,
+  /** 持ち主による編集ロックの強制解除（act_namに誰のロックを外したか） */
+  ロック解除: 15,
 } as const;
 
 /** m_kizaihyou_sts.chip_colorが取りうる値（MUIのChip color） */
@@ -95,6 +99,11 @@ export type EquipmentTableListRow = {
    * 申請していない・スナップショットが無い場合はnull。
    */
   shinseiHisId: number | null;
+  /**
+   * ログイン中のユーザーのこの機材表での権限（t_kizaihyou_member.role_cod）。
+   * 機材表履歴一覧（自分がメンバーの機材表）でだけ入る。申請依頼の一覧ではnull
+   */
+  myRole: number | null;
 };
 
 /**

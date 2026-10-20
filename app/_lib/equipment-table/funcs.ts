@@ -1,6 +1,7 @@
 'use server';
 
 import { requireCurrentUser } from '../auth/funcs';
+import { CurrentUser } from '../auth/types';
 import { selectKikikanBumonList } from '../db/kikikan/m-bumon';
 import { selectKikikanKizaiList } from '../db/kikikan/m-kizai';
 import { selectKikikanKizaiLstByIds, selectKikikanKizaiSetList } from '../db/kikikan/m-kizai-set';
@@ -20,6 +21,7 @@ import {
   selectLatestKizaihyouSnapshot,
   selectPreviousKizaihyouRequest,
 } from '../db/tables/t-kizaihyou-his';
+import { acquireKizaihyouLock, selectKizaihyouLock } from '../db/tables/t-kizaihyou-lock';
 import {
   EquipmentTableHead,
   EquipmentTableHistoryEntry,
@@ -27,8 +29,17 @@ import {
   KIZAIHYOU_ACT,
 } from '../equipment-table-list/types';
 import { formatDateTime } from '../format';
+import { getKizaihyouAccess, KizaihyouForbiddenError, requireKizaihyouRole, toLockInfo } from './access';
 import { buildEquipmentTableDiff, EquipmentTableDiff, hasDiff } from './diff';
 import { buildKizaihyouExcel, buildKizaihyouExcelFileName } from './excel';
+import {
+  EDIT_LOCK_TTL_MINUTES,
+  EditStatus,
+  KIZAIHYOU_ROLE,
+  KizaihyouAccess,
+  READ_ONLY_STATUS_NAMES,
+  SaveResult,
+} from './member';
 import { buildKizaihyouPdf, buildKizaihyouPdfFileName } from './pdf';
 import {
   BumonOption,
@@ -51,6 +62,8 @@ export type EquipmentTableDetail = {
   juchuHeadId: number | null;
   /** kikikanの受注機材ヘッダー。機材明細まで作られていればnull以外 */
   juchuKizaiHeadId: number | null;
+  /** 内容の版。保存・申請のときに照合し、読み込んだ後に誰かが保存していれば止める（楽観ロック） */
+  contentVer: number;
   head: EquipmentTableHead;
   columns: EquipmentColumn[];
   rows: EquipmentRow[];
@@ -95,6 +108,7 @@ export const fetchEquipmentTable = async (kizaihyouId: number): Promise<Equipmen
     shinseiHisId: head.shinsei_his_id,
     juchuHeadId: head.juchu_head_id,
     juchuKizaiHeadId: head.juchu_kizai_head_id,
+    contentVer: head.content_ver,
     head: {
       eventName: head.koen_nam,
       place: head.basho_nam ?? '',
@@ -114,6 +128,37 @@ export const fetchEquipmentTable = async (kizaihyouId: number): Promise<Equipmen
       indent: row.indent_num,
       qty: qtyByRow.get(row.row_id) ?? {},
     })),
+  };
+};
+
+/** 機材表画面が開いたときに受け取る内容 */
+export type EquipmentTablePageData =
+  | { forbidden: true }
+  | { forbidden: false; detail: EquipmentTableDetail; access: KizaihyouAccess; editStatus: EditStatus };
+
+/**
+ * 機材表画面に出す内容を、ログイン中のユーザーの権限と編集ロックの状態つきで取得する関数。
+ *
+ * メンバーでない人（受注部担当者を除く）には中身を返さない。
+ * `fetchEquipmentTable`は承認・連携の処理からも使う内部用で、権限を見ないので画面からは呼ばないこと。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ * @returns 内容と権限。機材表が無ければnull、開けなければforbidden
+ */
+export const fetchEquipmentTablePage = async (kizaihyouId: number): Promise<EquipmentTablePageData | null> => {
+  const user = await requireCurrentUser();
+  const access = await getKizaihyouAccess(kizaihyouId, user);
+  if (!access) return { forbidden: true };
+
+  const detail = await fetchEquipmentTable(kizaihyouId);
+  if (!detail) return null;
+
+  const lock = await selectKizaihyouLock(kizaihyouId);
+  return {
+    forbidden: false,
+    detail,
+    access,
+    editStatus: { lock: lock ? toLockInfo(lock, user.userId) : null, contentVer: detail.contentVer },
   };
 };
 
@@ -162,13 +207,16 @@ export const createEquipmentTable = async (
   head: EquipmentTableHead,
   columns: EquipmentColumn[],
   rows: EquipmentRow[]
-): Promise<number> => {
+): Promise<{ kizaihyouId: number; contentVer: number }> => {
   const user = await requireCurrentUser();
 
+  // 作成者は持ち主としてメンバーに入る（t_kizaihyouのINSERTトリガー）
   const { data, error } = await insertKizaihyou(toHeadInput(head), user.userNam, user.userId, null);
   if (error) throw new Error(`[createEquipmentTable] 機材表の作成に失敗しました: ${error.message}`);
 
-  await saveKizaihyouContent(data.kizaihyou_id, toHeadInput(head), toContentInput(columns, rows), user.userNam);
+  const contentVer = await saveContentOfNew(data.kizaihyou_id, head, columns, rows, user);
+  // 作った人がそのまま編集を続けられるよう、編集ロックを取っておく（採番されたIDの画面が編集中で開く）
+  await acquireKizaihyouLock(data.kizaihyou_id, user.userId, user.userNam, EDIT_LOCK_TTL_MINUTES);
 
   const { error: hisError } = await insertKizaihyouHis(
     data.kizaihyou_id,
@@ -181,7 +229,26 @@ export const createEquipmentTable = async (
   );
   if (hisError) throw new Error(`[createEquipmentTable] 操作履歴の登録に失敗しました: ${hisError.message}`);
 
-  return data.kizaihyou_id;
+  return { kizaihyouId: data.kizaihyou_id, contentVer };
+};
+
+/** 作ったばかりの機材表（版0）に内容を入れる。他の人が触れる前なので版が食い違うことは無い */
+const saveContentOfNew = async (
+  kizaihyouId: number,
+  head: EquipmentTableHead,
+  columns: EquipmentColumn[],
+  rows: EquipmentRow[],
+  user: CurrentUser
+) => {
+  const contentVer = await saveKizaihyouContent(
+    kizaihyouId,
+    toHeadInput(head),
+    toContentInput(columns, rows),
+    user.userNam,
+    0
+  );
+  if (contentVer === null) throw new Error('[saveContentOfNew] 作成直後の機材表の版が食い違いました');
+  return contentVer;
 };
 
 /**
@@ -233,31 +300,74 @@ const normalizeSnapshot = (snapshot: EquipmentTableSnapshot) =>
  * 直前のスナップショットと中身が同じなら履歴は作らない（何も変えずに
  * 保存を押しただけの履歴でタイムラインが埋まるのを防ぐ）。
  *
+ * 「編集」以上の権限と、編集ロックを持っていることが条件。ロックは保存のついでに延長する。
+ * ロックが切れていても誰も取っていなければ取り直して保存するが、その間に誰かが保存していれば
+ * 版（contentVer）が食い違うので保存しない。
+ *
  * @param kizaihyouId 対象のkizaihyou_id
  * @param head ヘッダの入力値
  * @param columns 画面の列（表示順）
  * @param rows 画面の行（表示順）
+ * @param expectedContentVer 画面が読み込んだ版
  * @param recordHistory 「保存」の履歴を残すか。申請の直前の保存は
  *                      「申請」の履歴にスナップショットを残すのでfalseにする
+ * @returns 保存できたら新しい版。できなければ理由
  */
 export const saveEquipmentTable = async (
   kizaihyouId: number,
   head: EquipmentTableHead,
   columns: EquipmentColumn[],
   rows: EquipmentRow[],
+  expectedContentVer: number,
   recordHistory = true
-) => {
-  const user = await requireCurrentUser();
+): Promise<SaveResult> => {
+  let user: CurrentUser;
+  try {
+    ({ user } = await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.編集));
+  } catch (e) {
+    if (e instanceof KizaihyouForbiddenError) return { ok: false, reason: 'forbidden', message: e.message };
+    throw e;
+  }
 
-  await saveKizaihyouContent(kizaihyouId, toHeadInput(head), toContentInput(columns, rows), user.userNam);
-  if (!recordHistory) return;
+  const { data: current, error: currentError } = await selectKizaihyouHead(kizaihyouId);
+  if (currentError) throw new Error(`[saveEquipmentTable] 機材表の取得に失敗しました: ${currentError.message}`);
+  if (!current) throw new Error('[saveEquipmentTable] 機材表が見つかりません');
+  const status = current.m_kizaihyou_sts?.sts_nam ?? '';
+  if (READ_ONLY_STATUS_NAMES.includes(status)) {
+    return { ok: false, reason: 'readonly', message: `${status}の機材表は保存できません。` };
+  }
+
+  const lock = await acquireKizaihyouLock(kizaihyouId, user.userId, user.userNam, EDIT_LOCK_TTL_MINUTES);
+  if (!lock) {
+    const other = await selectKizaihyouLock(kizaihyouId);
+    if (other) return { ok: false, reason: 'locked', lock: toLockInfo(other, user.userId) };
+    return { ok: false, reason: 'conflict', message: '保存できませんでした。もう一度お試しください。' };
+  }
+
+  const contentVer = await saveKizaihyouContent(
+    kizaihyouId,
+    toHeadInput(head),
+    toContentInput(columns, rows),
+    user.userNam,
+    expectedContentVer
+  );
+  if (contentVer === null) {
+    return {
+      ok: false,
+      reason: 'conflict',
+      message: 'この画面を開いた後に、他の人が機材表を保存しています。最新の内容を読み込んでから編集し直してください。',
+    };
+  }
+  if (!recordHistory) return { ok: true, kizaihyouId, contentVer };
 
   const snapshot: EquipmentTableSnapshot = { head, columns, rows };
   const { data: latest, error } = await selectLatestKizaihyouSnapshot(kizaihyouId);
   if (error) throw new Error(`[saveEquipmentTable] 直近のスナップショット取得に失敗しました: ${error.message}`);
 
   const latestSnapshot = latest?.snapshot ? fromStoredSnapshot(latest.snapshot) : null;
-  if (latestSnapshot && normalizeSnapshot(latestSnapshot) === normalizeSnapshot(snapshot)) return;
+  if (latestSnapshot && normalizeSnapshot(latestSnapshot) === normalizeSnapshot(snapshot)) {
+    return { ok: true, kizaihyouId, contentVer };
+  }
 
   const { error: hisError } = await insertKizaihyouHis(
     kizaihyouId,
@@ -269,6 +379,7 @@ export const saveEquipmentTable = async (
     snapshot
   );
   if (hisError) throw new Error(`[saveEquipmentTable] 操作履歴の登録に失敗しました: ${hisError.message}`);
+  return { ok: true, kizaihyouId, contentVer };
 };
 
 /**
@@ -326,6 +437,9 @@ export const exportEquipmentTablePdf = async (
  * @returns 操作日時の古い順に並んだ履歴
  */
 export const fetchEquipmentTableHistory = async (kizaihyouId: number): Promise<EquipmentTableHistoryEntry[]> => {
+  // メンバー（と、承認画面から見る受注部担当者）だけ
+  await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.閲覧);
+
   const { data, error } = await selectKizaihyouHisList([kizaihyouId]);
   if (error) throw new Error(`[fetchEquipmentTableHistory] 操作履歴の取得に失敗しました: ${error.message}`);
 
@@ -351,7 +465,8 @@ export const addEquipmentTableComment = async (
   kizaihyouId: number,
   comment: string
 ): Promise<EquipmentTableHistoryEntry[]> => {
-  const user = await requireCurrentUser();
+  // コメントは閲覧権限でもできる（受注部担当者も承認画面のタイムラインから書く）
+  const { user } = await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.閲覧);
 
   const { error } = await insertKizaihyouHis(
     kizaihyouId,
@@ -403,6 +518,25 @@ export const fetchEquipmentTableSnapshot = async (hisId: number): Promise<Equipm
     comment: data.mem ?? '',
     snapshot: fromStoredSnapshot(data.snapshot),
   };
+};
+
+/**
+ * スナップショット閲覧ページ用に、権限を確かめてからスナップショットを取得する関数。
+ * `fetchEquipmentTableSnapshot`は承認・流用の処理からも使う内部用で、権限を見ない。
+ *
+ * @param hisId 対象のhis_id
+ * @returns 内容。履歴が無ければnull、開けなければforbidden
+ */
+export const fetchEquipmentTableSnapshotForView = async (
+  hisId: number
+): Promise<{ forbidden: true } | { forbidden: false; detail: EquipmentTableSnapshotDetail } | null> => {
+  const detail = await fetchEquipmentTableSnapshot(hisId);
+  if (!detail) return null;
+
+  const user = await requireCurrentUser();
+  const access = await getKizaihyouAccess(detail.kizaihyouId, user);
+  if (!access) return { forbidden: true };
+  return { forbidden: false, detail };
 };
 
 /** 機材表承認画面が表示する内容 */
@@ -522,10 +656,11 @@ export const fetchEquipmentTableForApproval = async (kizaihyouId: number): Promi
  * @returns 作成した機材表のkizaihyou_id
  */
 export const createEquipmentTableFromSnapshot = async (hisId: number): Promise<number> => {
-  const user = await requireCurrentUser();
-
   const source = await fetchEquipmentTableSnapshot(hisId);
   if (!source) throw new Error('[createEquipmentTableFromSnapshot] 流用元のスナップショットが見つかりません');
+
+  // 流用は閲覧権限でもできる。できた機材表は流用した人のもので、メンバーは引き継がない
+  const { user } = await requireKizaihyouRole(source.kizaihyouId, KIZAIHYOU_ROLE.閲覧);
 
   const { head, columns, rows } = source.snapshot;
   const headInput = { ...toHeadInput(head), shukkoDat: null, nyukoDat: null };
@@ -533,7 +668,7 @@ export const createEquipmentTableFromSnapshot = async (hisId: number): Promise<n
   const { data, error } = await insertKizaihyou(headInput, user.userNam, user.userId, source.kizaihyouId);
   if (error) throw new Error(`[createEquipmentTableFromSnapshot] 機材表の作成に失敗しました: ${error.message}`);
 
-  await saveKizaihyouContent(data.kizaihyou_id, headInput, toContentInput(columns, rows), user.userNam);
+  await saveContentOfNew(data.kizaihyou_id, { ...head, shippedAt: '', returnedAt: '' }, columns, rows, user);
 
   const { error: hisError } = await insertKizaihyouHis(
     data.kizaihyou_id,

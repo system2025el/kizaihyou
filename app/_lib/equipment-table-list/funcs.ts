@@ -28,7 +28,10 @@ import {
   selectKizaihyouHandledHis,
   selectKizaihyouHisSnapshotFlags,
 } from '../db/tables/t-kizaihyou-his';
+import { selectKizaihyouMemberships } from '../db/tables/t-kizaihyou-member';
+import { findOtherEditor, KizaihyouForbiddenError, requireKizaihyouRole } from '../equipment-table/access';
 import { fetchEquipmentTable } from '../equipment-table/funcs';
+import { KIZAIHYOU_ROLE, SaveResult } from '../equipment-table/member';
 import { getActiveSum } from '../equipment-table/sheet';
 import { validateForRequest, validateLengthForKikikan } from '../equipment-table/validation';
 import { formatDate, formatDateTime, todayInJst } from '../format';
@@ -60,11 +63,18 @@ const toStatusColor = (value: string | undefined): EquipmentTableStatusColor =>
  * `fetchEquipmentTableHistory`を呼ぶこと。
  *
  * @param includeDeleted 削除済み（del_flg = 1）も含めるか
- * @param addUserId 作成者で絞る場合のm_user.user_id（nullなら全件）
+ * @param roleByKizaihyouId 自分がメンバーの機材表とその権限。渡せばその機材表だけに絞る（nullなら全件）
  * @returns 更新日時の新しい順に並んだ機材表
  */
-const fetchList = async (includeDeleted: boolean, addUserId: string | null): Promise<EquipmentTableListRow[]> => {
-  const { data, error } = await selectKizaihyouList(includeDeleted, addUserId);
+const fetchList = async (
+  includeDeleted: boolean,
+  roleByKizaihyouId: Map<number, number> | null
+): Promise<EquipmentTableListRow[]> => {
+  if (roleByKizaihyouId && !roleByKizaihyouId.size) return [];
+  const { data, error } = await selectKizaihyouList(
+    includeDeleted,
+    roleByKizaihyouId ? Array.from(roleByKizaihyouId.keys()) : null
+  );
   if (error) throw new Error(`[fetchList] 機材表の取得に失敗しました: ${error.message}`);
   if (!data?.length) return [];
 
@@ -100,6 +110,7 @@ const fetchList = async (includeDeleted: boolean, addUserId: string | null): Pro
       deleted: head.del_flg === 1,
       shinseiHisId:
         head.shinsei_his_id !== null && hasSnapshotByHisId.get(head.shinsei_his_id) ? head.shinsei_his_id : null,
+      myRole: roleByKizaihyouId?.get(head.kizaihyou_id) ?? null,
     };
   });
 };
@@ -107,19 +118,21 @@ const fetchList = async (includeDeleted: boolean, addUserId: string | null): Pro
 /**
  * 機材表履歴一覧に表示する機材表を取得する関数。
  *
- * **ログイン中のユーザーが作った機材表だけ**を返す。作成者の判定には
- * 氏名（`add_user`）ではなく`add_user_id`を使う——氏名は改姓や同姓同名で壊れるため。
+ * **ログイン中のユーザーがメンバーになっている機材表だけ**を返す（自分が作ったもの＝持ち主と、
+ * 招待されたもの）。判定はユーザーID（`t_kizaihyou_member.user_id`）で行い、氏名は使わない
+ * ——改姓や同姓同名で壊れるため。受注部担当者や`system`権限でも例外はない。
  *
- * 絞り込んでいるのは画面に出す一覧だけで、RLSは認証済みユーザーに一律許可のまま。
- * 他人の機材表もIDが分かれば機材表画面から開けるので、閲覧そのものを止めたい場合は
- * RLSポリシーを別途書くこと。
+ * メンバーでない人が機材表を開けないようにしているのはサーバー側の各処理
+ * （`requireKizaihyouRole`）で、RLSは認証済みユーザーに一律許可のまま。
  *
  * @param includeDeleted 削除済み（del_flg = 1）も含めるか
- * @returns 更新日時の新しい順に並んだ、自分が作った機材表
+ * @returns 更新日時の新しい順に並んだ、自分がメンバーの機材表
  */
 export const fetchEquipmentTableList = async (includeDeleted = false): Promise<EquipmentTableListRow[]> => {
   const user = await requireCurrentUser();
-  return fetchList(includeDeleted, user.userId);
+  const { data, error } = await selectKizaihyouMemberships(user.userId);
+  if (error) throw new Error(`[fetchEquipmentTableList] メンバーの取得に失敗しました: ${error.message}`);
+  return fetchList(includeDeleted, new Map((data ?? []).map((member) => [member.kizaihyou_id, member.role_cod])));
 };
 
 /**
@@ -129,7 +142,8 @@ export const fetchEquipmentTableList = async (includeDeleted = false): Promise<E
  * @returns 作成した機材表のkizaihyou_id
  */
 export const copyEquipmentTable = async (sourceId: number, sourceCod: string): Promise<number> => {
-  const user = await requireCurrentUser();
+  // 流用は閲覧権限でもできる。できた機材表は流用した人のもので、メンバーは引き継がない
+  const { user } = await requireKizaihyouRole(sourceId, KIZAIHYOU_ROLE.閲覧);
   const { kizaihyouId } = await copyKizaihyou(sourceId, user.userNam, user.userId);
 
   const { error } = await insertKizaihyouHis(
@@ -166,6 +180,19 @@ const changeStatus = async (
 
   const { error: hisError } = await insertKizaihyouHis(kizaihyouId, actCod, actNam, user.userId, user.userNam, comment);
   if (hisError) throw new Error(`[changeStatus] 操作履歴の登録に失敗しました: ${hisError.message}`);
+};
+
+/**
+ * 状態を変える前に、他の人が編集中でないかを確かめる関数。
+ * 完了・削除・申請すると編集できなくなるので、編集中の人の作業を黙って止めないようにする。
+ *
+ * @param kizaihyouId 対象のkizaihyou_id
+ * @param userId ログイン中のユーザー
+ */
+const requireNoOtherEditor = async (kizaihyouId: number, userId: string) => {
+  const other = await findOtherEditor(kizaihyouId, userId);
+  if (other)
+    throw new KizaihyouForbiddenError(`${other.userNam}さんが編集中です。編集が終わってから操作してください。`);
 };
 
 /**
@@ -212,12 +239,31 @@ export const fetchJuchuTantoOptions = async (): Promise<JuchuTantoOption[]> => {
  * 申請先は複数指定できる。**そのうち1人が承認すれば承認済**になる運用で、
  * 全員の承認は要らない（誰が承認したかは操作履歴に残る）。
  *
+ * 「申請」以上の権限が要る。他の人が編集中なら申請しない。画面が見ていた版と今の版が
+ * 食い違えば（誰かが保存していれば）、見ていない内容を申請することになるので申請しない。
+ *
  * @param kizaihyouId 対象のkizaihyou_id
  * @param tantoUserIds 申請先に選んだ受注部担当者のuser_id（1件以上）
  * @param comment 申請コメント
+ * @param expectedContentVer 画面が見ていた内容の版（申請の直前に保存したならその後の版）
+ * @returns 申請できたか、できなければ理由
  */
-export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: string[], comment: string) => {
-  const user = await requireCurrentUser();
+export const requestEquipmentTable = async (
+  kizaihyouId: number,
+  tantoUserIds: string[],
+  comment: string,
+  expectedContentVer: number
+): Promise<SaveResult> => {
+  let user;
+  try {
+    ({ user } = await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.申請));
+  } catch (e) {
+    if (e instanceof KizaihyouForbiddenError) return { ok: false, reason: 'forbidden', message: e.message };
+    throw e;
+  }
+
+  const other = await findOtherEditor(kizaihyouId, user.userId);
+  if (other) return { ok: false, reason: 'locked', lock: other };
 
   // 画面から渡ったuser_idをそのまま信用せず、権限のある人かを取り直して確かめる
   const options = await fetchJuchuTantoOptions();
@@ -236,7 +282,7 @@ export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: s
 
   const tantoNam = tanto.map((option) => option.userNam).join('、');
 
-  await requestKizaihyou({
+  const hisId = await requestKizaihyou({
     kizaihyouId,
     stsCod: KIZAIHYOU_STS['申請中'],
     tantoNam,
@@ -248,7 +294,16 @@ export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: s
     actNam: `申請（受注部担当者：${tantoNam}）`,
     mem: comment || null,
     snapshot: { head: detail.head, columns: detail.columns, rows: detail.rows },
+    expectedContentVer,
   });
+  if (hisId === null) {
+    return {
+      ok: false,
+      reason: 'conflict',
+      message: 'この画面を開いた後に、他の人が機材表を保存しています。最新の内容を確かめてから申請してください。',
+    };
+  }
+  return { ok: true, kizaihyouId, contentVer: expectedContentVer };
 };
 
 /**
@@ -259,6 +314,7 @@ export const requestEquipmentTable = async (kizaihyouId: number, tantoUserIds: s
  * @param comment 取り下げコメント
  */
 export const withdrawEquipmentTable = async (kizaihyouId: number, comment: string) => {
+  await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.申請);
   await changeStatus(kizaihyouId, '取下げ', KIZAIHYOU_ACT.取り下げ, '取り下げ', comment || null);
 };
 
@@ -272,6 +328,8 @@ export const withdrawEquipmentTable = async (kizaihyouId: number, comment: strin
  * @param kizaihyouId 対象のkizaihyou_id
  */
 export const completeEquipmentTable = async (kizaihyouId: number) => {
+  const { user } = await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.持ち主);
+  await requireNoOtherEditor(kizaihyouId, user.userId);
   await changeStatus(kizaihyouId, '完了', KIZAIHYOU_ACT.完了, '完了', null);
 };
 
@@ -280,6 +338,7 @@ export const completeEquipmentTable = async (kizaihyouId: number) => {
  * @param kizaihyouId 対象のkizaihyou_id
  */
 export const reopenEquipmentTable = async (kizaihyouId: number) => {
+  await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.持ち主);
   await changeStatus(kizaihyouId, '作成中', KIZAIHYOU_ACT.完了解除, '完了を解除', null);
 };
 
@@ -293,6 +352,8 @@ export const reopenEquipmentTable = async (kizaihyouId: number) => {
  * @param kizaihyouId 対象のkizaihyou_id
  */
 export const deleteEquipmentTable = async (kizaihyouId: number) => {
+  const { user } = await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.持ち主);
+  await requireNoOtherEditor(kizaihyouId, user.userId);
   await changeDelFlg(kizaihyouId, 1, KIZAIHYOU_ACT.削除, '削除');
 };
 
@@ -301,6 +362,7 @@ export const deleteEquipmentTable = async (kizaihyouId: number) => {
  * @param kizaihyouId 対象のkizaihyou_id
  */
 export const restoreEquipmentTable = async (kizaihyouId: number) => {
+  await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.持ち主);
   await changeDelFlg(kizaihyouId, 0, KIZAIHYOU_ACT.復元, '削除を取り消し');
 };
 

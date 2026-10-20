@@ -53,7 +53,7 @@ yarn fix             # prettier --write + eslint --fix（コミット前に実�
   - `app/_lib/db/kikikan/` — **kikikanのDB**を参照する別系統（`supabase-kikikan.ts`＝クライアント、`types.ts`＝手書きの型、`m-kizai.ts`＝クエリ関数）。上記3つはいずれもkizaihyou自身のDBを指すので混同しないこと。
   - `app/_lib/db/tables/*.ts`（テーブル/ビューごとのクエリ関数）はkikikanの命名規約（`m-*`=マスタ、`t-*`=トランザクション、`v-*`=ビュー、関数名は`select*`/`insert*`/`update*`/`delete*`/`check*`）とtry/catchでの2層エラーハンドリング（DB層は`throw new Error('[関数名] DBエラー:', { cause: e })`、呼び出し元の`funcs.ts`層でSupabaseの`error`をチェック）に従う。
   - DBのカラムはsnake_case、アプリコードはcamelCase。変換の自動レイヤーは無く、クエリごとに手動マッピングする。
-- **API RouteではなくServer Actions**: ビジネスロジックのファイルは`'use server'`を付与し、クライアントコンポーネントから直接Server Actionsとして呼び出す方針（kikikanに合わせる）。
+- **API RouteではなくServer Actions**: ビジネスロジックのファイルは`'use server'`を付与し、クライアントコンポーネントから直接Server Actionsとして呼び出す方針（kikikanに合わせる）。例外は`app/api/equipment-table/[id]/lock/release`の1本だけで、タブを閉じる瞬間に編集ロックを外す`navigator.sendBeacon`がPOSTのURLしか叩けないため。
 
 ### Excel出力
 
@@ -91,6 +91,8 @@ DDLは`scripts/db-migration/01-init-kizaihyou.sql`（適用済み）。命名・
 | `t_kizaihyou_row`    | 機材表の行（機材1点）。`kizai_id`＝kikikanの`m_kizai.kizai_id`（FK無し、手入力名はnull）、`kizai_nam`は表示用スナップショット。`mem`＝行ごとの備考（Excelの`D`列）。`indent_num`＝機材名のインデント段数 |
 | `t_kizaihyou_tanto`  | 機材表の申請先（受注部担当者）。複数指定でき、`user_nam`は申請時点の氏名スナップショット                                                                                                                 |
 | `t_kizaihyou_qty`    | 行×列の数量セル。空セルはレコードを作らない（疎行列）。`TOTAL = ACTIVE合計 + spare_qty`                                                                                                                  |
+| `t_kizaihyou_member` | 機材表のメンバーと権限（`role_cod`: 1=閲覧 / 2=編集 / 3=申請 / 9=持ち主）。持ち主は作成者で1機材表に1人、`t_kizaihyou`のINSERTトリガーで入る                                                             |
+| `t_kizaihyou_lock`   | 編集ロック（1機材表に1行）。`expire_dat`を過ぎたものは切れていて他の人が取れる                                                                                                                           |
 | `t_kizaihyou_his`    | 操作履歴兼タイムライン。`mem`にコメント、`snapshot`(jsonb)に保存・申請時点の機材表、`user_nam`は操作時点の氏名スナップショット                                                                           |
 
 - 公演名・場所・顧客名・出庫入庫日はkikikanの受注（`t_juchu_head`）とは切り離し、kizaihyou側で自前保持している。受注との紐付けは未実装。
@@ -126,13 +128,27 @@ DDLは`scripts/db-migration/01-init-kizaihyou.sql`（適用済み）。命名・
   - 対応済みの判定は`t_kizaihyou_tanto`ではなく**操作履歴**（`act_cod`が承認・差戻し）で行う。申請先は再申請のたびに入れ直されるため、担当者で辿ると過去の対応が消える。横断で引くので`t_kizaihyou_his (act_cod, his_id desc)`にインデックスを張ってある。
   - **承認済なのに未連携の機材表があると画面上部に赤い警告を出す**。連携できていない＝機材管理側で在庫が押さえられていないという実害があるのに、一覧の1列だと見落とすため。
   - この画面だけは他人が作った機材表を扱うので、`fetchApprovalHandledList`は`juchu_tanto`権限を確認する。権限が無い場合の失敗が未対応タブを巻き込まないよう、画面側は`Promise.allSettled`で別々に扱う。
-- **機材表履歴一覧は、ログイン中のユーザーが作った機材表しか出さない**（`fetchEquipmentTableList`）。作成者の判定は氏名の`add_user`ではなく`add_user_id`（`m_user`へのFK）で行う——氏名は改姓や同姓同名で壊れるため。**受注部担当者や`system`権限でも例外はない**。
-  - 機材表申請依頼画面は他人が作った機材表を承認する画面なので、作成者では絞らない（`fetchApprovalRequestList`は内部の`fetchList`を作成者なしで呼ぶ）。同じ関数を使い回すと承認者に何も出なくなるので注意。
-  - **絞っているのは一覧の表示だけで、RLSは認証済みユーザーに一律許可のまま**。他人の機材表もIDが分かれば機材表画面から開ける。閲覧そのものを止めるならRLSポリシーを書く必要がある（Supabaseプロジェクトを分けるタイミングで検討する）。
+- **機材表はメンバー制**（`t_kizaihyou_member`、DDLは`scripts/db-migration/15`）。作成者が持ち主になり、機材表ごとにメンバーを招待できる。権限は段階で、上の段階は下の段階でできることを全部できる（`app/_lib/equipment-table/member.ts`の`KIZAIHYOU_ROLE`）。
+  - 閲覧：見る・Excel/PDF出力・コメント・流用して新規作成（流用した機材表は流用した人のもので、メンバーは引き継がない）
+  - 編集：＋編集・保存 ／ 申請：＋申請・取り下げ
+  - 持ち主：＋メンバーの招待・権限変更・外す、削除・復元・完了・作成中に戻す、編集ロックの強制解除
+  - **メンバーでない人は機材表画面・スナップショット閲覧ページを開けない**。ただし**受注部担当者（`juchu_tanto`）は閲覧だけできる**——承認画面から申請時点の内容を開いたり、タイムラインにコメントしたりするため。
+  - **権限の判定はServer Actionsの中で必ず行う**（`requireKizaihyouRole`、`app/_lib/equipment-table/access.ts`）。画面でボタンを消すだけではServer Actionsを直接呼ばれると素通りする。`access.ts`は判定そのものを外から呼ばれないよう`'use server'`を付けていない。RLSは認証済みユーザーに一律許可のまま。
+  - `fetchEquipmentTable`・`fetchEquipmentTableSnapshot`は承認・連携の処理からも使う内部用で権限を見ない。画面からは`fetchEquipmentTablePage`・`fetchEquipmentTableSnapshotForView`を使う。
+  - 招待できるのはkizaihyouにアカウントがある人だけ（サインアップ画面が無い）。招待しても通知は送らない。メンバーの変更とロックの強制解除は操作履歴に残す（`act_cod` 14・15）。
+- **編集は1人ずつ（編集ロック、`t_kizaihyou_lock`）**。機材表は「編集」を押すまで閲覧モードで開き、押した人がロックを取る。
+  - 取得は`INSERT ... ON CONFLICT DO UPDATE ... WHERE`の1文（`acquireKizaihyouLock`）。kikikanの`t_lock`は「空いているか確かめる」と「取る」が別々で、同時に押すと両方取れる隙間があるので真似しない。
+  - 編集中の画面は、操作（キー入力・クリック）があったときだけ1分ごとに延長する（`useEditLock`）。**10分操作しなければ切れて**他の人が取れる。切れる1分前に警告を出す。「編集を終了」・画面内の移動・タブを閉じる（sendBeacon）で外す。
+  - 閲覧している画面は30秒ごとに「誰が編集中か」と版を確かめ、誰かが保存していれば読み直す。
+  - **保存・申請では版（`t_kizaihyou.content_ver`）も照合する（楽観ロック）**。ロックを放置して切れている間に他の人が保存した、という取りこぼしはロックだけでは防げないため。食い違えば保存せず「最新を読み込む」を出す。保存・申請の結果は例外ではなく`SaveResult`で返す（本番ビルドでは例外の文言が画面に届かないため）。
+  - 申請は`requestKizaihyou`のトランザクションの中で版を確かめ、ロックも外す。完了・削除は他の人が編集中なら止める。
+  - 新規作成した人は、作成と同時にロックを取った状態で採番後の画面が開く（そのまま編集を続けられる）。
+- **機材表履歴一覧は、ログイン中のユーザーがメンバーの機材表しか出さない**（`fetchEquipmentTableList`）。判定はユーザーID（`t_kizaihyou_member.user_id`）で行い、氏名は使わない。**受注部担当者や`system`権限でも例外はない**。招待された機材表には「招待：編集」のように自分の権限を出す。
+  - 機材表申請依頼画面は他人が作った機材表を承認する画面なので、メンバーでは絞らない（`fetchApprovalRequestList`は内部の`fetchList`を絞り込みなしで呼ぶ）。同じ関数を使い回すと承認者に何も出なくなるので注意。
 - **削除はステータスではなく`t_kizaihyou.del_flg`で表す**（kikikanから引き継いだ監査列）。ステータスにも持たせると`sts_cod = 削除`かつ`del_flg = 0`のような組み合わせが作れてしまい、どちらが正か分からなくなるため。ステータスは触らないので、復元すると削除前の状態がそのまま戻る。
   - 一覧は元から`del_flg = 0`だけを引いているので、削除すると自動的に消える。戻す導線として機材表履歴一覧に「削除済も表示」トグルと復元ボタンを置いている（`selectKizaihyouList(includeDeleted)`）。
   - 申請中は削除も完了もできない（承認者が見ている最中のため）。**機材管理へ連携済みの機材表を削除しても、向こうの受注・機材明細は消さない**（別システムなので受注部の判断に委ねる）。削除の確認ダイアログにその旨を出す。
-- RLSは全テーブルで有効。現状は認証済みユーザーに一律許可（権限の細分化は未導入）。kikikanから参照させる場合は別途ポリシーが必要。
+- RLSは全テーブルで有効。現状は認証済みユーザーに一律許可で、機材表ごとの権限（メンバー制）はアプリ側（Server Actions）で判定している。kikikanから参照させる場合は別途ポリシーが必要。
 - **機材表の保存は「列・行を全削除して入れ直す」方式**（数量セルは列のcascadeで消える）。画面がシート全体を一括編集するための割り切りで、保存のたびに`column_id`・`row_id`は採番し直される。画面側の未保存の行・列には`row-new-1`のような一時idを振り、保存時は配列のindexで数量セルを対応付けている。
 
 ## コーディング規約
@@ -155,7 +171,7 @@ kikikanと同じ方式に揃える。
 現行プロジェクト（`lqxuybzllbgprzuuynfp`）をそのまま本番とし、**開発用のSupabaseプロジェクトを新しく作ってローカル・ステージングをそちらへ向ける**。移行時に踏みやすい点：
 
 - **本番になるDBに、開発中のテストデータとテスト用Authアカウントが残っている**。`test@example.com`（テスト太郎）や仮アドレスのユーザー、テスト用の機材表を消してから本番として使い始めること。
-- **新しい開発プロジェクトにはスキーマを作り直す必要がある**。`scripts/db-migration/01〜07`を順に流せば再現できる（マスタのINSERTも含む）。ただし`m_user`は`auth.users`へのFKがあるためSQLだけでは入らず、Admin APIでauthアカウントを作ってからプロファイルを入れる。
+- **新しい開発プロジェクトにはスキーマを作り直す必要がある**。`scripts/db-migration/01〜15`を順に流せば再現できる（マスタのINSERTも含む）。ただし`m_user`は`auth.users`へのFKがあるためSQLだけでは入らず、Admin APIでauthアカウントを作ってからプロファイルを入れる。
 - **`KIKIKAN_*`の向き先も見直すこと**。現状は開発環境からもkikikanの**本番**プロジェクトを参照している。参照のみなので今は実害がないが、受注連携（書き込み）を実装したら、開発環境はkikikanのステージングを向けないと本番データを壊す。
 - **IPv4アドオン**は新しいプロジェクトでも有効化が要る（pg Poolでの直接接続を使う場合）。
 - `.mcp.json`のSupabase MCPは`project_ref`を直書きしているので、作業対象のプロジェクトに合わせて切り替える。

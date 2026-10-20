@@ -37,6 +37,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
 import { fetchEquipmentTableHistory } from '@/app/_lib/equipment-table/funcs';
+import { KIZAIHYOU_ROLE, ROLE_LABELS, toRole } from '@/app/_lib/equipment-table/member';
 import {
   DEFAULT_SORT,
   EMPTY_FILTER,
@@ -278,7 +279,7 @@ const EquipmentTableList = () => {
 
       <Typography variant="body2" color="text.secondary" mb={1}>
         {hasFilter(filter) ? `${rows.length}件中 ${filteredRows.length}件` : `${rows.length}件`}
-        （自分が作成した機材表のみ）
+        （自分が作成した機材表と、招待された機材表のみ）
       </Typography>
 
       <TableContainer>
@@ -324,6 +325,15 @@ const EquipmentTableList = () => {
                   <Link component="button" onClick={() => router.push(`/equipment-table/${row.id}`)} underline="hover">
                     {row.eventName || '(公演名未入力)'}
                   </Link>
+                  {/* 招待された機材表には自分の権限を出す（持ち主＝自分が作ったものには出さない） */}
+                  {row.myRole !== null && row.myRole !== KIZAIHYOU_ROLE.持ち主 && (
+                    <Chip
+                      label={`招待：${ROLE_LABELS[toRole(row.myRole)]}`}
+                      size="small"
+                      variant="outlined"
+                      sx={{ ml: 1 }}
+                    />
+                  )}
                 </TableCell>
                 <TableCell>{row.place}</TableCell>
                 <TableCell>{row.clientName}</TableCell>
@@ -377,7 +387,8 @@ const EquipmentTableList = () => {
                 </TableCell>
                 {includeDeleted && (
                   <TableCell align="center">
-                    {row.deleted ? (
+                    {/* 復元できるのは持ち主だけ（サーバー側でも弾く） */}
+                    {row.deleted && row.myRole === KIZAIHYOU_ROLE.持ち主 ? (
                       <Tooltip title="削除を取り消して一覧に戻す">
                         <span>
                           <IconButton size="small" onClick={() => handleRestore(row)} disabled={busy}>

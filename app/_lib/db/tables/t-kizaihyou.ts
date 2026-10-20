@@ -9,7 +9,7 @@ import { createClient } from '../supabase-server';
 const HEAD_COLUMNS = `
   kizaihyou_id, kizaihyou_cod, koen_nam, basho_nam, kokyaku_nam,
   shukko_dat, nyuko_dat, sts_cod, tanto_nam,
-  shinsei_nam, shinsei_his_id, juchu_head_id, juchu_kizai_head_id, mem, del_flg, add_dat, upd_dat,
+  shinsei_nam, shinsei_his_id, juchu_head_id, juchu_kizai_head_id, mem, del_flg, content_ver, add_dat, upd_dat,
   m_kizaihyou_sts ( sts_nam, chip_color ),
   t_kizaihyou_tanto ( user_id, user_nam, dsp_ord_num )
 `;
@@ -17,15 +17,15 @@ const HEAD_COLUMNS = `
 /**
  * 機材表ヘッダを一覧取得する関数
  * @param includeDeleted 削除済み（del_flg = 1）も含めるか
- * @param addUserId 作成者で絞る場合のm_user.user_id（nullなら全件）
+ * @param kizaihyouIds 絞り込むkizaihyou_id（自分がメンバーの機材表など）。nullなら全件
  * @returns 更新日時の新しい順に並んだ機材表ヘッダ
  */
-export const selectKizaihyouList = async (includeDeleted = false, addUserId: string | null = null) => {
+export const selectKizaihyouList = async (includeDeleted = false, kizaihyouIds: number[] | null = null) => {
   const supabase = await createClient();
   try {
     let query = supabase.schema(SCHEMA).from('t_kizaihyou').select(HEAD_COLUMNS);
     if (!includeDeleted) query = query.eq('del_flg', 0);
-    if (addUserId) query = query.eq('add_user_id', addUserId);
+    if (kizaihyouIds) query = query.in('kizaihyou_id', kizaihyouIds);
     return await query.order('upd_dat', { ascending: false });
   } catch (e) {
     throw new Error('[selectKizaihyouList] DBエラー:', { cause: e });
@@ -242,6 +242,8 @@ export type KizaihyouRequestInput = {
   mem: string | null;
   /** 申請時点の機材表の内容 */
   snapshot: EquipmentTableSnapshot;
+  /** 画面が見ていた内容の版。食い違えば（誰かが保存していれば）申請しない */
+  expectedContentVer: number;
 };
 
 /**
@@ -255,13 +257,26 @@ export type KizaihyouRequestInput = {
  *
  * 申請先は差戻し後の再申請で選び直せるよう、毎回入れ直す。
  *
+ * 画面が見ていた版と今の版が食い違えば（画面を開いた後に誰かが保存していれば）申請しない。
+ * 申請すると編集できなくなるので、編集ロックも同じトランザクションで外す。
+ *
  * @param input 申請の内容
- * @returns 残した操作履歴のhis_id
+ * @returns 残した操作履歴のhis_id。版が食い違って申請しなかった場合はnull
  */
-export const requestKizaihyou = async (input: KizaihyouRequestInput) => {
+export const requestKizaihyou = async (input: KizaihyouRequestInput): Promise<number | null> => {
   const connection = await pool.connect();
   try {
     await connection.query('BEGIN');
+
+    // 版を確かめつつ行をロックし、確かめてから更新するまでの間に保存が割り込まないようにする
+    const current = await connection.query(
+      `SELECT 1 FROM ${SCHEMA}.t_kizaihyou WHERE kizaihyou_id = $1 AND content_ver = $2 FOR UPDATE`,
+      [input.kizaihyouId, input.expectedContentVer]
+    );
+    if (!current.rowCount) {
+      await connection.query('ROLLBACK');
+      return null;
+    }
 
     const his = await connection.query<{ his_id: string }>(
       `INSERT INTO ${SCHEMA}.t_kizaihyou_his (kizaihyou_id, act_cod, act_nam, user_id, user_nam, mem, snapshot)
@@ -299,6 +314,8 @@ export const requestKizaihyou = async (input: KizaihyouRequestInput) => {
         input.tanto.map((_tanto, index) => index + 1),
       ]
     );
+
+    await connection.query(`DELETE FROM ${SCHEMA}.t_kizaihyou_lock WHERE kizaihyou_id = $1`, [input.kizaihyouId]);
 
     await connection.query('COMMIT');
     return hisId;
@@ -401,28 +418,51 @@ export type KizaihyouContentInput = {
  * 複数テーブルにまたがる更新なので、Supabase-jsではなくpg Poolの
  * トランザクションで行う。
  *
+ * **版（content_ver）を照合する（楽観ロック）**。画面が読み込んだ版と今の版が食い違えば、
+ * 読み込んだ後に誰かが保存しているので、その変更を黙って上書きしないよう保存しない。
+ * 編集ロックがあっても、放置して切れている間に他の人が保存した場合はここでしか止められない。
+ *
  * @param kizaihyouId 対象のkizaihyou_id
  * @param head 更新するヘッダの値
  * @param content 保存する列・行・数量
  * @param updUser 更新者名
+ * @param expectedContentVer 画面が読み込んだ版
+ * @returns 保存後の版。版が食い違って保存しなかった場合はnull
  */
 export const saveKizaihyouContent = async (
   kizaihyouId: number,
   head: KizaihyouHeadInput,
   content: KizaihyouContentInput,
-  updUser: string
-) => {
+  updUser: string,
+  expectedContentVer: number
+): Promise<number | null> => {
   const connection = await pool.connect();
   try {
     await connection.query('BEGIN');
 
-    await connection.query(
+    const updated = await connection.query<{ content_ver: number }>(
       `UPDATE ${SCHEMA}.t_kizaihyou
           SET koen_nam = $2, basho_nam = $3, kokyaku_nam = $4,
-              shukko_dat = $5, nyuko_dat = $6, mem = $7, upd_user = $8
-        WHERE kizaihyou_id = $1`,
-      [kizaihyouId, head.koenNam, head.bashoNam, head.kokyakuNam, head.shukkoDat, head.nyukoDat, head.mem, updUser]
+              shukko_dat = $5, nyuko_dat = $6, mem = $7, upd_user = $8,
+              content_ver = content_ver + 1
+        WHERE kizaihyou_id = $1 AND content_ver = $9
+        RETURNING content_ver`,
+      [
+        kizaihyouId,
+        head.koenNam,
+        head.bashoNam,
+        head.kokyakuNam,
+        head.shukkoDat,
+        head.nyukoDat,
+        head.mem,
+        updUser,
+        expectedContentVer,
+      ]
     );
+    if (!updated.rowCount) {
+      await connection.query('ROLLBACK');
+      return null;
+    }
 
     await connection.query(`DELETE FROM ${SCHEMA}.t_kizaihyou_column WHERE kizaihyou_id = $1`, [kizaihyouId]);
     await connection.query(`DELETE FROM ${SCHEMA}.t_kizaihyou_row WHERE kizaihyou_id = $1`, [kizaihyouId]);
@@ -493,6 +533,7 @@ export const saveKizaihyouContent = async (
     }
 
     await connection.query('COMMIT');
+    return updated.rows[0].content_ver;
   } catch (e) {
     await connection.query('ROLLBACK');
     throw new Error('[saveKizaihyouContent] DBエラー:', { cause: e });

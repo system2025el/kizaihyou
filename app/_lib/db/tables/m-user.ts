@@ -52,7 +52,7 @@ export const selectUserList = async () => {
     return await supabase
       .schema(SCHEMA)
       .from('m_user')
-      .select('user_id, user_nam, permission, dsp_ord_num')
+      .select('user_id, user_nam, email, permission, dsp_ord_num')
       .eq('del_flg', 0)
       .order('dsp_ord_num', { nullsFirst: false })
       .order('user_nam');

@@ -17,8 +17,9 @@ const REFRESH_INTERVAL_MS = 60000;
  *
  * @param refresh 再取得する処理。毎レンダリングで作り直さないよう`useCallback`で包むこと
  * @param enabled falseの間は動かさない
+ * @param intervalMs 取り直す間隔（既定は60秒）
  */
-export const useAutoRefresh = (refresh: () => void, enabled = true) => {
+export const useAutoRefresh = (refresh: () => void, enabled = true, intervalMs = REFRESH_INTERVAL_MS) => {
   useEffect(() => {
     if (!enabled) return;
 
@@ -27,7 +28,7 @@ export const useAutoRefresh = (refresh: () => void, enabled = true) => {
       refresh();
     };
 
-    const timer = setInterval(run, REFRESH_INTERVAL_MS);
+    const timer = setInterval(run, intervalMs);
     document.addEventListener('visibilitychange', run);
     window.addEventListener('focus', run);
     return () => {
@@ -35,5 +36,5 @@ export const useAutoRefresh = (refresh: () => void, enabled = true) => {
       document.removeEventListener('visibilitychange', run);
       window.removeEventListener('focus', run);
     };
-  }, [refresh, enabled]);
+  }, [refresh, enabled, intervalMs]);
 };

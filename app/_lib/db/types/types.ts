@@ -74,6 +74,7 @@ export type Database = {
           add_user: string | null;
           add_user_id: string | null;
           basho_nam: string | null;
+          content_ver: number;
           copy_from_id: number | null;
           del_flg: number;
           juchu_head_id: number | null;
@@ -98,6 +99,7 @@ export type Database = {
           add_user?: string | null;
           add_user_id?: string | null;
           basho_nam?: string | null;
+          content_ver?: number;
           copy_from_id?: number | null;
           del_flg?: number;
           juchu_head_id?: number | null;
@@ -122,6 +124,7 @@ export type Database = {
           add_user?: string | null;
           add_user_id?: string | null;
           basho_nam?: string | null;
+          content_ver?: number;
           copy_from_id?: number | null;
           del_flg?: number;
           juchu_head_id?: number | null;
@@ -255,6 +258,93 @@ export type Database = {
           },
           {
             foreignKeyName: 't_kizaihyou_his_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'm_user';
+            referencedColumns: ['user_id'];
+          },
+        ];
+      };
+      t_kizaihyou_lock: {
+        Row: {
+          expire_dat: string;
+          kizaihyou_id: number;
+          last_act_dat: string;
+          lock_dat: string;
+          user_id: string;
+          user_nam: string;
+        };
+        Insert: {
+          expire_dat: string;
+          kizaihyou_id: number;
+          last_act_dat?: string;
+          lock_dat?: string;
+          user_id: string;
+          user_nam?: string;
+        };
+        Update: {
+          expire_dat?: string;
+          kizaihyou_id?: number;
+          last_act_dat?: string;
+          lock_dat?: string;
+          user_id?: string;
+          user_nam?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 't_kizaihyou_lock_kizaihyou_id_fkey';
+            columns: ['kizaihyou_id'];
+            isOneToOne: true;
+            referencedRelation: 't_kizaihyou';
+            referencedColumns: ['kizaihyou_id'];
+          },
+          {
+            foreignKeyName: 't_kizaihyou_lock_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'm_user';
+            referencedColumns: ['user_id'];
+          },
+        ];
+      };
+      t_kizaihyou_member: {
+        Row: {
+          add_dat: string;
+          add_user: string;
+          kizaihyou_id: number;
+          role_cod: number;
+          upd_dat: string;
+          upd_user: string;
+          user_id: string;
+        };
+        Insert: {
+          add_dat?: string;
+          add_user?: string;
+          kizaihyou_id: number;
+          role_cod: number;
+          upd_dat?: string;
+          upd_user?: string;
+          user_id: string;
+        };
+        Update: {
+          add_dat?: string;
+          add_user?: string;
+          kizaihyou_id?: number;
+          role_cod?: number;
+          upd_dat?: string;
+          upd_user?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 't_kizaihyou_member_kizaihyou_id_fkey';
+            columns: ['kizaihyou_id'];
+            isOneToOne: false;
+            referencedRelation: 't_kizaihyou';
+            referencedColumns: ['kizaihyou_id'];
+          },
+          {
+            foreignKeyName: 't_kizaihyou_member_user_id_fkey';
             columns: ['user_id'];
             isOneToOne: false;
             referencedRelation: 'm_user';

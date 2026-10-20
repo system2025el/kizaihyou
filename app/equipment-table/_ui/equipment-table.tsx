@@ -19,7 +19,10 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import DownloadIcon from '@mui/icons-material/Download';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import EditIcon from '@mui/icons-material/Edit';
+import EditOffIcon from '@mui/icons-material/EditOff';
 import ForumIcon from '@mui/icons-material/Forum';
+import GroupIcon from '@mui/icons-material/Group';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
@@ -58,7 +61,7 @@ import {
 } from '@mui/material';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { INITIAL_COLUMN_COUNT, INITIAL_ROW_COUNT } from '@/app/_lib/equipment-table/constants';
 import { downloadBase64File, PDF_MIME_TYPE, XLSM_MIME_TYPE } from '@/app/_lib/equipment-table/download';
@@ -69,6 +72,17 @@ import {
   exportEquipmentTablePdf,
   saveEquipmentTable,
 } from '@/app/_lib/equipment-table/funcs';
+import { fetchEditStatus, forceStopEditing } from '@/app/_lib/equipment-table/lock-funcs';
+import {
+  EDIT_STATUS_POLL_MS,
+  EditLockInfo,
+  EditStatus,
+  hasRole,
+  KIZAIHYOU_ROLE,
+  KizaihyouAccess,
+  ROLE_LABELS,
+  SaveResult,
+} from '@/app/_lib/equipment-table/member';
 import { getActiveSum, getTotal, hasEquipmentRowContent } from '@/app/_lib/equipment-table/sheet';
 import { BumonOption, EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
 import { validateForRequest } from '@/app/_lib/equipment-table/validation';
@@ -86,10 +100,13 @@ import {
   EquipmentTableStatus,
   JuchuTantoOption,
 } from '@/app/_lib/equipment-table-list/types';
+import { useAutoRefresh } from '@/app/_lib/hooks/use-auto-refresh';
 import { EquipmentTimeline } from '@/app/_ui/equipment-timeline';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
 
 import KizaiAddDialog, { AddedKizai } from './kizai-add-dialog';
+import MembersDialog from './members-dialog';
+import { LockLostReason, useEditLock } from './use-edit-lock';
 
 /** 未保存の行・列に付ける一時id。保存するとDBの採番したidに置き換わる */
 let tempIdCounter = 0;
@@ -555,14 +572,24 @@ const EquipmentRowView = ({
 type EquipmentTableProps = {
   /** まだ保存していない（新規作成の）機材表ならnull */
   detail: EquipmentTableDetail | null;
+  /** ログイン中のユーザーの権限。新規作成（detailがnull）ならnull＝作る人が持ち主 */
+  access?: KizaihyouAccess | null;
+  /** 開いた時点の編集ロックの状態。新規作成ならnull */
+  editStatus?: EditStatus | null;
   kizaiOptions: KizaiOption[];
   kizaiKindOptions: BumonOption[];
   juchuTantoOptions: JuchuTantoOption[];
   history: EquipmentTableHistoryEntry[];
 };
 
+/** ロックを持っている人の表示（「○○さんが編集中（最終操作 3分前）」） */
+const describeLock = (lock: EditLockInfo) =>
+  `${lock.userNam}さんが編集中です（最終操作 ${lock.idleMinutes === 0 ? '1分以内' : `${lock.idleMinutes}分前`}）`;
+
 const EquipmentTable = ({
   detail,
+  access = null,
+  editStatus = null,
   kizaiOptions,
   kizaiKindOptions,
   juchuTantoOptions,
@@ -595,6 +622,16 @@ const EquipmentTable = ({
    * nullなら上部のボタンから開いた場合で、入力のある最後の行の直後に入れる
    */
   const [kizaiAddTarget, setKizaiAddTarget] = useState<{ afterRowId: string | null } | null>(null);
+  const [membersOpen, setMembersOpen] = useState(false);
+  /** 画面が持っている内容の版。保存・申請のときにサーバーの版と照合する */
+  const [contentVer, setContentVer] = useState(detail?.contentVer ?? 0);
+  /** 他の人（または自分の別のタブ）が持っている編集ロック。誰も編集していなければnull */
+  const [otherLock, setOtherLock] = useState<EditLockInfo | null>(
+    editStatus?.lock && !editStatus.lock.mine ? editStatus.lock : null
+  );
+  /** 版が食い違って保存・申請できなかった（最新を読み込むボタンを出す） */
+  const [conflict, setConflict] = useState(false);
+  const [confirmEndEdit, setConfirmEndEdit] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const kindOptions = useMemo(
@@ -625,14 +662,158 @@ const EquipmentTable = ({
     return byKind;
   }, [kizaiOptions, kizaiKindOptions]);
 
+  // 新規作成（まだ保存していない）は作る人が持ち主
+  const role = access?.role ?? KIZAIHYOU_ROLE.持ち主;
+  const isOwner = role === KIZAIHYOU_ROLE.持ち主;
+  const canEditRole = hasRole(role, KIZAIHYOU_ROLE.編集);
+  const canRequestRole = hasRole(role, KIZAIHYOU_ROLE.申請);
+
   // 申請中は承認者が申請時点の内容を見ているので、こちらからは触らせない
-  const readOnly = READ_ONLY_STATUSES.includes(status);
+  const statusReadOnly = READ_ONLY_STATUSES.includes(status);
   const canRequest = REQUESTABLE_STATUSES.includes(status);
 
   // 未保存の変更があるかは、最後に保存した内容とのスナップショット比較で判定する
   const [savedSnapshot, setSavedSnapshot] = useState(() => toSnapshot(head, columns, rows));
   const currentSnapshot = useMemo(() => toSnapshot(head, columns, rows), [head, columns, rows]);
   const isDirty = currentSnapshot !== savedSnapshot;
+
+  /** ロックを失ったとき（期限切れ・他の人に取られた）。入力中の内容は画面に残す */
+  const handleLockLost = useCallback((lost: LockLostReason) => {
+    if (lost.reason === 'locked') {
+      setOtherLock(lost.lock);
+      setError(
+        `${lost.lock.userNam}さんが編集を始めたため、編集を終了しました。入力中で保存していない内容は保存されていません。`
+      );
+    } else if (lost.reason === 'expired') {
+      setError(
+        '操作が無かったため編集ロックが切れました。入力中で保存していない内容は保存されていません。「編集」を押すと続けられます（その間に他の人が保存していなければ、そのまま保存できます）。'
+      );
+    } else {
+      setError(lost.message);
+    }
+  }, []);
+
+  const editLock = useEditLock(
+    kizaihyouId,
+    editStatus?.lock?.mine && !statusReadOnly ? editStatus.lock.expiresInSeconds : null,
+    handleLockLost
+  );
+  // 新規作成はロックの対象外（まだ誰も開けない）なので、作る人がそのまま編集する
+  const editing = kizaihyouId === null || editLock.editing;
+  const readOnly = statusReadOnly || !editing;
+
+  // 申請・取り下げ・承認などで状態が変わって編集できなくなったら、ロックも手放す
+  useEffect(() => {
+    if (statusReadOnly && editLock.editing) void editLock.stop();
+  }, [statusReadOnly, editLock]);
+
+  // サーバーから新しい内容が届いたら（保存後の読み直し・他の人の保存）画面に反映する。
+  // 編集中で保存していない変更があるときは、入力を消さないよう反映しない（forceReloadRefを立てたときを除く）
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
+  const forceReloadRef = useRef(false);
+  const firstDetailRef = useRef(true);
+  useEffect(() => {
+    if (firstDetailRef.current) {
+      firstDetailRef.current = false;
+      return;
+    }
+    if (!detail || (isDirtyRef.current && !forceReloadRef.current)) return;
+    forceReloadRef.current = false;
+    setHead(detail.head);
+    setColumns(detail.columns);
+    setRows(detail.rows);
+    setSavedSnapshot(toSnapshot(detail.head, detail.columns, detail.rows));
+    setContentVer(detail.contentVer);
+    setTantoUserIds(detail.tantoUserIds);
+    setConflict(false);
+  }, [detail]);
+
+  /** 入力中の内容を捨てて、最新の内容を読み込む */
+  const reloadLatest = () => {
+    forceReloadRef.current = true;
+    setError('');
+    router.refresh();
+  };
+
+  // 編集していない間は、誰が編集中か・誰かが保存したかを定期的に確かめ、保存されていれば読み直す
+  const pollEditStatus = useCallback(async () => {
+    if (kizaihyouId === null || editLock.editing) return;
+    try {
+      const statusNow = await fetchEditStatus(kizaihyouId);
+      setOtherLock(statusNow.lock);
+      if (statusNow.contentVer !== contentVer && !isDirtyRef.current) router.refresh();
+    } catch {
+      // 一時的な失敗は次の確認で取り直す
+    }
+  }, [kizaihyouId, editLock.editing, contentVer, router]);
+  useAutoRefresh(pollEditStatus, kizaihyouId !== null && !editLock.editing, EDIT_STATUS_POLL_MS);
+
+  /** 「編集」 */
+  const handleStartEdit = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await editLock.start();
+      if (!result) return;
+      if (result.ok) {
+        setOtherLock(null);
+        // 閲覧している間に誰かが保存していれば、その内容から編集を始める
+        if (result.contentVer !== contentVer) {
+          if (isDirtyRef.current) setConflict(true);
+          else router.refresh();
+        }
+        return;
+      }
+      if (result.reason === 'locked') {
+        setOtherLock(result.lock);
+        setError(`${describeLock(result.lock)}。編集が終わるまでお待ちください。`);
+      } else {
+        setError(result.message);
+      }
+    } catch {
+      setError('編集を始められませんでした。');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 「編集を終了」。保存していない変更があれば確認する */
+  const handleEndEdit = () => {
+    if (isDirty) {
+      setConfirmEndEdit(true);
+      return;
+    }
+    void editLock.stop();
+  };
+
+  /** 持ち主が、他の人の編集ロックを外す */
+  const handleForceUnlock = async () => {
+    if (kizaihyouId === null) return;
+    setBusy(true);
+    setError('');
+    try {
+      await forceStopEditing(kizaihyouId);
+      setOtherLock(null);
+      setMessage('編集ロックを解除しました。「編集」を押すと編集できます。');
+    } catch {
+      setError('編集ロックを解除できませんでした。');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 保存・申請が止められたときの表示 */
+  const showBlocked = (result: Exclude<SaveResult, { ok: true }>) => {
+    if (result.reason === 'locked') {
+      setOtherLock(result.lock);
+      void editLock.stop();
+      setError(`${describeLock(result.lock)}。保存・申請できませんでした。`);
+      return;
+    }
+    if (result.reason === 'conflict') setConflict(true);
+    setError(result.message);
+  };
 
   // 申請にだけ必要な入力チェック（保存は書きかけでもできる）
   const requestErrors = useMemo(() => validateForRequest(head, rows), [head, rows]);
@@ -738,20 +919,24 @@ const EquipmentTable = ({
    *
    * @returns 機材表のkizaihyou_id（新規作成ならここで採番されたもの）
    */
-  const save = async (recordHistory = true): Promise<number> => {
+  const save = async (recordHistory = true): Promise<SaveResult> => {
     const snapshot = toSnapshot(head, columns, rows);
 
     if (kizaihyouId === null) {
-      const createdId = await createEquipmentTable(head, columns, rows);
+      const created = await createEquipmentTable(head, columns, rows);
       setSavedSnapshot(snapshot);
-      return createdId;
+      setContentVer(created.contentVer);
+      return { ok: true, ...created };
     }
 
-    await saveEquipmentTable(kizaihyouId, head, columns, rows, recordHistory);
+    const result = await saveEquipmentTable(kizaihyouId, head, columns, rows, contentVer, recordHistory);
+    if (!result.ok) return result;
     setSavedSnapshot(snapshot);
+    setContentVer(result.contentVer);
+    editLock.markExtended();
     // 保存で列・行のidが採番し直されるため、サーバーから読み直す
     router.refresh();
-    return kizaihyouId;
+    return result;
   };
 
   const handleBack = () => {
@@ -766,10 +951,14 @@ const EquipmentTable = ({
     setBusy(true);
     setError('');
     try {
-      const savedId = await save();
+      const result = await save();
+      if (!result.ok) {
+        showBlocked(result);
+        return;
+      }
       if (kizaihyouId === null) {
-        // 採番されたIDの画面へ。戻るで未保存の画面に戻らないようreplaceする
-        router.replace(`/equipment-table/${savedId}`);
+        // 採番されたIDの画面へ（作った人が編集ロックを持った状態で開く）。戻るで未保存の画面に戻らないようreplaceする
+        router.replace(`/equipment-table/${result.kizaihyouId}`);
         return;
       }
       setMessage('保存しました');
@@ -812,8 +1001,34 @@ const EquipmentTable = ({
     setBusy(true);
     setError('');
     try {
-      const savedId = await save(false);
-      await requestEquipmentTable(savedId, tantoUserIds, requestComment.trim());
+      // 編集中なら今の内容を保存してから、その版で申請する。編集していなければ表示中の版で申請する
+      let target = { kizaihyouId, contentVer };
+      if (editing) {
+        const saved = await save(false);
+        if (!saved.ok) {
+          showBlocked(saved);
+          setRequestOpen(false);
+          setBusy(false);
+          return;
+        }
+        target = saved;
+      }
+      if (target.kizaihyouId === null) return;
+
+      const result = await requestEquipmentTable(
+        target.kizaihyouId,
+        tantoUserIds,
+        requestComment.trim(),
+        target.contentVer
+      );
+      if (!result.ok) {
+        showBlocked(result);
+        setRequestOpen(false);
+        setBusy(false);
+        return;
+      }
+      // 申請と同時にサーバー側でロックも外れている
+      editLock.markReleased();
       setMessage('申請しました');
       router.push('/equipment-table-list');
     } catch {
@@ -828,7 +1043,15 @@ const EquipmentTable = ({
     setBusy(true);
     setError('');
     try {
-      if (saveFirst) await save();
+      if (saveFirst) {
+        const saved = await save();
+        if (!saved.ok) {
+          showBlocked(saved);
+          setConfirmCopy(false);
+          setBusy(false);
+          return;
+        }
+      }
       if (kizaihyouId === null) return;
       const id = await copyEquipmentTable(kizaihyouId, cod);
       router.push(`/equipment-table/${id}`);
@@ -840,7 +1063,8 @@ const EquipmentTable = ({
   };
 
   const handleCopy = () => {
-    if (isDirty) {
+    // 流用元はDBの内容。編集中で保存していない変更があるときだけ確認する
+    if (isDirty && editing) {
       setConfirmCopy(true);
       return;
     }
@@ -915,8 +1139,38 @@ const EquipmentTable = ({
             </IconButton>
             <Typography variant="h5">機材表 {cod || '（新規作成）'}</Typography>
             <Chip label={status} size="small" />
+            {access && (
+              <Chip
+                label={access.member ? `権限：${ROLE_LABELS[role]}` : '受注部として閲覧'}
+                size="small"
+                variant="outlined"
+              />
+            )}
+            {kizaihyouId !== null && editing && <Chip label="編集中" size="small" color="primary" />}
           </Box>
-          <Box display="flex" gap={1}>
+          <Box display="flex" gap={1} flexWrap="wrap" justifyContent="flex-end">
+            {kizaihyouId !== null &&
+              canEditRole &&
+              !statusReadOnly &&
+              (editLock.editing ? (
+                <Button startIcon={<EditOffIcon />} onClick={handleEndEdit} disabled={busy}>
+                  編集を終了
+                </Button>
+              ) : (
+                <Button
+                  startIcon={<EditIcon />}
+                  variant="contained"
+                  onClick={handleStartEdit}
+                  disabled={busy || (!!otherLock && !otherLock.mine)}
+                >
+                  編集
+                </Button>
+              ))}
+            {kizaihyouId !== null && access?.member && (
+              <Button startIcon={<GroupIcon />} onClick={() => setMembersOpen(true)}>
+                メンバー
+              </Button>
+            )}
             <Button
               startIcon={<LibraryAddIcon />}
               onClick={() => setKizaiAddTarget({ afterRowId: null })}
@@ -946,31 +1200,35 @@ const EquipmentTable = ({
             <Button startIcon={<PictureAsPdfIcon />} onClick={handleExportPdf} disabled={busy}>
               PDF出力
             </Button>
-            {status === '完了' ? (
-              <Button startIcon={<LockOpenIcon />} onClick={handleReopen} disabled={busy}>
-                作成中に戻す
-              </Button>
-            ) : (
+            {/* 完了・作成中に戻す・削除は持ち主だけ。他の人が編集中なら止める（サーバー側でも弾く） */}
+            {isOwner &&
+              (status === '完了' ? (
+                <Button startIcon={<LockOpenIcon />} onClick={handleReopen} disabled={busy}>
+                  作成中に戻す
+                </Button>
+              ) : (
+                <Button
+                  startIcon={<TaskAltIcon />}
+                  onClick={handleComplete}
+                  disabled={busy || kizaihyouId === null || !COMPLETABLE_STATUSES.includes(status) || !!otherLock}
+                >
+                  完了にする
+                </Button>
+              ))}
+            {isOwner && (
               <Button
-                startIcon={<TaskAltIcon />}
-                onClick={handleComplete}
-                disabled={busy || kizaihyouId === null || !COMPLETABLE_STATUSES.includes(status)}
+                startIcon={<DeleteForeverIcon />}
+                color="error"
+                onClick={() => setDeleteOpen(true)}
+                disabled={busy || kizaihyouId === null || status === '申請中' || !!otherLock}
               >
-                完了にする
+                削除
               </Button>
             )}
-            <Button
-              startIcon={<DeleteForeverIcon />}
-              color="error"
-              onClick={() => setDeleteOpen(true)}
-              disabled={busy || kizaihyouId === null || status === '申請中'}
-            >
-              削除
-            </Button>
             <Button startIcon={<SaveIcon />} variant="outlined" onClick={handleSave} disabled={busy || readOnly}>
               保存
             </Button>
-            {status === '申請中' ? (
+            {!canRequestRole ? null : status === '申請中' ? (
               <Button
                 startIcon={<UndoIcon />}
                 variant="contained"
@@ -988,7 +1246,8 @@ const EquipmentTable = ({
                 startIcon={<SendIcon />}
                 variant="contained"
                 onClick={() => setRequestOpen(true)}
-                disabled={busy || !canRequest}
+                // 編集していないのに保存していない変更がある（ロックが切れた後など）と、画面と違う内容を申請してしまう
+                disabled={busy || !canRequest || (!!otherLock && !otherLock.mine) || (!editing && isDirty)}
               >
                 申請
               </Button>
@@ -1007,7 +1266,58 @@ const EquipmentTable = ({
             まだ保存していません。保存するか申請すると機材表IDが採番され、機材表履歴一覧に載ってタイムライン・出力・流用が使えるようになります。
           </Alert>
         )}
-        {readOnly && (
+        {conflict && (
+          <Alert
+            severity="warning"
+            sx={{ mb: 2 }}
+            action={
+              <Button size="small" onClick={reloadLatest}>
+                最新を読み込む
+              </Button>
+            }
+          >
+            この画面を開いた後に、他の人が機材表を保存しています。「最新を読み込む」を押すと最新の内容になります（保存していない入力は消えます）。
+          </Alert>
+        )}
+        {otherLock && !editLock.editing && (
+          <Alert
+            severity="info"
+            sx={{ mb: 2 }}
+            action={
+              isOwner &&
+              !otherLock.mine && (
+                <Button size="small" onClick={handleForceUnlock} disabled={busy}>
+                  ロックを解除
+                </Button>
+              )
+            }
+          >
+            {otherLock.mine
+              ? 'あなたが別のタブ（または別の端末）で編集中です。この画面で「編集」を押すと、こちらで編集を続けられます。'
+              : `${describeLock(otherLock)}。編集が終わるまでは閲覧のみです（30秒ごとに最新の内容を反映します）。`}
+          </Alert>
+        )}
+        {editLock.editing && editLock.warning && (
+          <Alert
+            severity="warning"
+            sx={{ mb: 2 }}
+            action={
+              <Button size="small" onClick={() => void editLock.extend()}>
+                編集を続ける
+              </Button>
+            }
+          >
+            操作が無いため、まもなく編集ロックが切れます（あと{Math.max(0, editLock.remainingSeconds ?? 0)}秒）。
+          </Alert>
+        )}
+        {access && !canEditRole && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            {access.member
+              ? '閲覧権限のため編集できません。編集が必要な場合は持ち主に権限の変更を頼んでください。'
+              : '受注部担当者として閲覧しています（この機材表のメンバーではないため編集できません）。'}
+          </Alert>
+        )}
+        {statusReadOnly && (
           <Alert severity="info" sx={{ mb: 2 }}>
             {status === '完了'
               ? '完了した機材表は編集できません。編集するには「作成中に戻す」を押してください。'
@@ -1161,6 +1471,58 @@ const EquipmentTable = ({
             />
           )}
         </Box>
+
+        {kizaihyouId !== null && (
+          <MembersDialog
+            open={membersOpen}
+            kizaihyouId={kizaihyouId}
+            isOwner={isOwner}
+            onClose={() => setMembersOpen(false)}
+          />
+        )}
+
+        <Dialog open={confirmEndEdit} onClose={() => setConfirmEndEdit(false)}>
+          <DialogTitle fontSize="medium">保存していない変更があります</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">保存してから編集を終了しますか？</Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button
+              variant="contained"
+              onClick={async () => {
+                setConfirmEndEdit(false);
+                setBusy(true);
+                setError('');
+                try {
+                  const result = await save();
+                  if (!result.ok) {
+                    showBlocked(result);
+                    return;
+                  }
+                  await editLock.stop();
+                  setMessage('保存して編集を終了しました');
+                } catch {
+                  setError('保存に失敗しました。');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              保存して終了
+            </Button>
+            <Button
+              color="error"
+              onClick={async () => {
+                setConfirmEndEdit(false);
+                await editLock.stop();
+                reloadLatest();
+              }}
+            >
+              変更を破棄して終了
+            </Button>
+            <Button onClick={() => setConfirmEndEdit(false)}>キャンセル</Button>
+          </DialogActions>
+        </Dialog>
 
         <Dialog open={confirmBack} onClose={() => setConfirmBack(false)}>
           <DialogTitle fontSize="medium">保存していない変更があります</DialogTitle>

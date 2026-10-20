@@ -1,8 +1,9 @@
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
-import { fetchEquipmentTableSnapshot } from '@/app/_lib/equipment-table/funcs';
+import { fetchEquipmentTableSnapshotForView } from '@/app/_lib/equipment-table/funcs';
 
+import EquipmentTableForbidden from '../../../_ui/equipment-table-forbidden';
 import EquipmentTableSnapshotView from '../../../_ui/equipment-table-snapshot';
 
 export const metadata: Metadata = {
@@ -16,10 +17,12 @@ const Page = async ({ params }: { params: Promise<{ id: string; hisId: string }>
   const historyId = Number(hisId);
   if (!Number.isInteger(kizaihyouId) || !Number.isInteger(historyId)) notFound();
 
-  const detail = await fetchEquipmentTableSnapshot(historyId);
+  // メンバーと受注部担当者（承認画面から開く）だけが見られる
+  const result = await fetchEquipmentTableSnapshotForView(historyId);
   // URLの機材表IDと履歴の機材表IDが食い違うものは開かせない
-  if (!detail || detail.kizaihyouId !== kizaihyouId) notFound();
+  if (!result || (!result.forbidden && result.detail.kizaihyouId !== kizaihyouId)) notFound();
+  if (result.forbidden) return <EquipmentTableForbidden />;
 
-  return <EquipmentTableSnapshotView detail={detail} />;
+  return <EquipmentTableSnapshotView detail={result.detail} />;
 };
 export default Page;
