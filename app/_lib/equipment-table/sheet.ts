@@ -38,6 +38,68 @@ export const parseQty = (value: string | undefined) => {
   return Number.isInteger(qty) && qty >= 0 ? qty : null;
 };
 
+/**
+ * 行が属するセット（インデントの無い行と、その直下に続くインデント行＝付属品）の範囲を返す関数。
+ * @returns [先頭のindex, 末尾の次のindex]
+ */
+const getRowGroupRange = (rows: EquipmentRow[], index: number): [number, number] => {
+  let start = index;
+  // 付属品なら親までさかのぼる。先頭が親のいない付属品なら、そこをセットの先頭とみなす
+  while (start > 0 && rows[start].indent > 0) start -= 1;
+  let end = start + 1;
+  while (end < rows.length && rows[end].indent > 0) end += 1;
+  return [start, end];
+};
+
+/**
+ * ドラッグで行を並び替える関数（課題A-9）。
+ *
+ * - **親の行（インデント無し）は、直下に続く付属品（インデント行）ごと動かす**。セットオプションで足した
+ *   付属品が親だけ動かすと置き去りになる、という要望への対応。
+ * - 親を動かすとき、落とした先が別のセットの中なら、そのセットの前（上へ動かしたとき）か後ろ（下へ動かしたとき）に置く。
+ *   セットの親と付属品の間に別の機材が割り込むと、付属品が別の親に付いたように見えてしまうため。
+ * - 付属品の行を動かすときは、その行だけを落とした位置へ動かす（別のセットへ付け替えられるように）。
+ *
+ * @param activeId 掴んだ行のid
+ * @param overId 落とした位置の行のid
+ */
+export const moveEquipmentRow = (rows: EquipmentRow[], activeId: string, overId: string): EquipmentRow[] => {
+  const from = rows.findIndex((row) => row.id === activeId);
+  const to = rows.findIndex((row) => row.id === overId);
+  if (from === -1 || to === -1 || from === to) return rows;
+
+  if (rows[from].indent > 0) {
+    const next = [...rows];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    return next;
+  }
+
+  const [, blockEnd] = getRowGroupRange(rows, from);
+  // 自分の付属品の上に落としたときは動かさない
+  if (to > from && to < blockEnd) return rows;
+
+  const block = rows.slice(from, blockEnd);
+  const rest = [...rows.slice(0, from), ...rows.slice(blockEnd)];
+  const [groupStart, groupEnd] = getRowGroupRange(
+    rest,
+    rest.findIndex((row) => row.id === overId)
+  );
+  const insertAt = to > from ? groupEnd : groupStart;
+  return [...rest.slice(0, insertAt), ...block, ...rest.slice(insertAt)];
+};
+
+/**
+ * 親の行を掴んだときに一緒に動く付属品の行のidを返す関数（ドラッグ中に薄く表示するため）。
+ * 付属品の行を掴んだとき・付属品が無いときは空。
+ */
+export const getFollowingChildRowIds = (rows: EquipmentRow[], activeId: string) => {
+  const from = rows.findIndex((row) => row.id === activeId);
+  if (from === -1 || rows[from].indent > 0) return [];
+  const [, blockEnd] = getRowGroupRange(rows, from);
+  return rows.slice(from + 1, blockEnd).map((row) => row.id);
+};
+
 /** ACTIVE（各ポジションの数量の合計） */
 export const getActiveSum = (row: EquipmentRow) =>
   Object.values(row.qty).reduce((sum, value) => sum + (Number(value) || 0), 0);

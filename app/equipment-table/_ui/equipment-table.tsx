@@ -1,6 +1,15 @@
 'use client';
 
-import { closestCenter, DndContext, DragEndEvent, Modifier, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import {
+  closestCenter,
+  DndContext,
+  DragEndEvent,
+  DragStartEvent,
+  Modifier,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
 import { restrictToHorizontalAxis, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import {
   arrayMove,
@@ -84,7 +93,14 @@ import {
   ROLE_LABELS,
   SaveResult,
 } from '@/app/_lib/equipment-table/member';
-import { getActiveSum, getTotal, hasEquipmentRowContent, toQtyInput } from '@/app/_lib/equipment-table/sheet';
+import {
+  getActiveSum,
+  getFollowingChildRowIds,
+  getTotal,
+  hasEquipmentRowContent,
+  moveEquipmentRow,
+  toQtyInput,
+} from '@/app/_lib/equipment-table/sheet';
 import { BumonOption, EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
 import { validateForRequest } from '@/app/_lib/equipment-table/validation';
 import {
@@ -571,6 +587,8 @@ type EquipmentRowViewProps = {
   onAddKizaiBelow: () => void;
   /** この行の直下に空行を1行入れる */
   onInsertRowBelow: () => void;
+  /** ドラッグ中の親の行と一緒に動く付属品か（薄く表示して、一緒に動くことを示す） */
+  movingWithParent?: boolean;
 };
 
 const EquipmentRowView = ({
@@ -586,6 +604,7 @@ const EquipmentRowView = ({
   onRemoveRow,
   onAddKizaiBelow,
   onInsertRowBelow,
+  movingWithParent = false,
 }: EquipmentRowViewProps) => {
   const [insertMenuAnchor, setInsertMenuAnchor] = useState<HTMLElement | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -600,7 +619,7 @@ const EquipmentRowView = ({
       sx={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.6 : 1,
+        opacity: isDragging ? 0.6 : movingWithParent ? 0.3 : 1,
         zIndex: isDragging ? 1 : 'auto',
         bgcolor: isDragging ? 'background.paper' : undefined,
         // 固定列のセルは個別に背景を塗っているので、行ではなくセルごと塗り替える
@@ -886,6 +905,12 @@ const EquipmentTable = ({
       onResizeEnd={(width) => commitFixedWidth(index, width)}
       onReset={() => commitFixedWidth(index, FIXED_COLUMN_WIDTHS[index])}
     />
+  );
+  /** ドラッグ中の行のid。一緒に動く付属品を薄く表示するのに使う（課題A-9） */
+  const [draggingRowId, setDraggingRowId] = useState<string | null>(null);
+  const followingRowIds = useMemo(
+    () => new Set(draggingRowId === null ? [] : getFollowingChildRowIds(rows, draggingRowId)),
+    [rows, draggingRowId]
   );
   /** 削除の確認を出している行・列 */
   const [removeTarget, setRemoveTarget] = useState<{ type: 'row' | 'column'; id: string; message: string } | null>(
@@ -1217,23 +1242,29 @@ const EquipmentTable = ({
     );
   };
 
+  const handleDragStart = (event: DragStartEvent) => {
+    const dragId = String(event.active.id);
+    setDraggingRowId(isRowDragId(dragId) ? fromDragId(dragId) : null);
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingRowId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
     const activeId = fromDragId(String(active.id));
     const overId = fromDragId(String(over.id));
-    undoHistory.record();
 
     if (isRowDragId(String(active.id))) {
-      setRows((prev) => {
-        const oldIndex = prev.findIndex((row) => row.id === activeId);
-        const newIndex = prev.findIndex((row) => row.id === overId);
-        if (oldIndex === -1 || newIndex === -1) return prev;
-        return arrayMove(prev, oldIndex, newIndex);
-      });
+      // 親の行は付属品（直下のインデント行）ごと動かす（課題A-9）
+      const moved = moveEquipmentRow(rows, activeId, overId);
+      if (moved === rows) return;
+      undoHistory.record();
+      setRows(moved);
       return;
     }
+
+    undoHistory.record();
 
     setColumns((prev) => {
       const oldIndex = prev.findIndex((column) => column.id === activeId);
@@ -1479,7 +1510,9 @@ const EquipmentTable = ({
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={[restrictAxisByDraggedType]}
+      onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragCancel={() => setDraggingRowId(null)}
     >
       <Box p={2}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
@@ -1837,6 +1870,7 @@ const EquipmentTable = ({
                         onRemoveRow={() => requestRemoveRow(row.id)}
                         onAddKizaiBelow={() => setKizaiAddTarget({ afterRowId: row.id })}
                         onInsertRowBelow={() => insertRowBelow(row.id)}
+                        movingWithParent={followingRowIds.has(row.id)}
                       />
                     ))}
                   </SortableContext>
