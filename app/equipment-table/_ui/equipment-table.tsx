@@ -380,6 +380,64 @@ const QTY_INPUT_SX = { '& input': { textAlign: 'right' } } as const;
 const QTY_HTML_INPUT = { inputMode: 'numeric' } as const;
 
 /**
+ * 数量の入力欄をキーボードで移動するための位置（課題A-4）。
+ * 列はSPAREを0、ポジションを1から数える。入力欄にdata属性で持たせ、表のkeydownでまとめて扱う。
+ */
+const qtyGridInput = (row: number, col: number) => ({
+  ...QTY_HTML_INPUT,
+  'data-qty-row': row,
+  'data-qty-col': col,
+});
+
+/** キーごとの移動量（行, 列） */
+const QTY_GRID_MOVES: Record<string, [number, number]> = {
+  ArrowUp: [-1, 0],
+  ArrowDown: [1, 0],
+  ArrowLeft: [0, -1],
+  ArrowRight: [0, 1],
+  Enter: [1, 0],
+};
+
+/**
+ * 数量の欄でのキー操作。テンキーとカーソルだけで入力していけるよう、Excelに近い動きにする（課題A-4）。
+ * - 矢印キーは隣のセルへ移動するだけにする（数字なので、欄の中でカーソルを動かす必要は無い）
+ * - Enterは下、Shift+Enterは上へ移動する
+ * - 移動先は中身を選択した状態にして、打てばそのまま上書きできるようにする
+ * 表の端では動かない。日本語入力の変換中は、変換の操作に矢印・Enterを使うので邪魔しない。
+ */
+const handleQtyGridKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+  const target = event.target as HTMLElement;
+  if (!(target instanceof HTMLInputElement) || target.dataset.qtyRow === undefined) return;
+  if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+  const move = QTY_GRID_MOVES[event.key];
+  if (!move) return;
+
+  event.preventDefault();
+  const [rowStep, colStep] = event.key === 'Enter' && event.shiftKey ? [-1, 0] : move;
+  const row = Number(target.dataset.qtyRow) + rowStep;
+  const col = Number(target.dataset.qtyCol) + colStep;
+  const next = event.currentTarget.querySelector<HTMLInputElement>(
+    `input[data-qty-row="${row}"][data-qty-col="${col}"]`
+  );
+  if (!next) return;
+  next.focus();
+  next.select();
+};
+
+/**
+ * 選択中のセルを枠で囲む（課題A-5）。どの行かも分かるよう、その行の行番号も色を付ける（`.row-number`）。
+ * 入力欄の下線だけでは、今どこにいるのか分かりにくいため。
+ */
+const FOCUSED_CELL_SX = {
+  // 行頭の操作ボタン（並び替え・追加・削除）の欄は、押したときに枠が出ても意味が無いので除く
+  '& > td:focus-within:not(.row-controls)': { outline: 2, outlineColor: 'primary.main', outlineOffset: -2 },
+  '&:focus-within .row-number': { color: 'primary.main', fontWeight: 'bold' },
+} as const;
+
+/** キーで移動したセルが固定列や見出しの下に隠れないよう、スクロールに余白を取る（見出しの行の高さ） */
+const HEADER_SCROLL_PADDING = 48;
+
+/**
  * 何も入力されていない行の背景色（課題A-6）。区切りに入れた空行や、使っていない行を見分けやすくする。
  * 固定列は後ろのポジション列が透けないよう背景を塗っているので、不透明な色にする。
  */
@@ -532,12 +590,14 @@ const EquipmentRowView = ({
         ...(empty && { '& > td': { bgcolor: EMPTY_ROW_COLOR } }),
         // インデントの切り替えは普段は目立たせない（オプションなので）
         '&:hover .indent-toggle': { opacity: 1 },
+        ...FOCUSED_CELL_SX,
       }}
     >
-      <TableCell sx={fixedCellSx(0)}>
+      <TableCell sx={fixedCellSx(0)} className="row-controls">
         <Box display="flex" alignItems="center" gap={0.5}>
           {/* 桁数で後ろのアイコンがずれないよう、3桁分の幅を取って右寄せにする（行数は3桁まで） */}
           <Typography
+            className="row-number"
             variant="caption"
             color="text.secondary"
             sx={{ width: '3ch', flexShrink: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
@@ -689,10 +749,10 @@ const EquipmentRowView = ({
           variant="standard"
           size="small"
           sx={{ width: 56, ...QTY_INPUT_SX }}
-          slotProps={{ input: { readOnly }, htmlInput: QTY_HTML_INPUT }}
+          slotProps={{ input: { readOnly }, htmlInput: qtyGridInput(index, 0) }}
         />
       </TableCell>
-      {columns.map((column) => (
+      {columns.map((column, columnIndex) => (
         <TableCell key={column.id} align="center">
           <TextField
             value={row.qty[column.id] ?? ''}
@@ -700,7 +760,7 @@ const EquipmentRowView = ({
             variant="standard"
             size="small"
             sx={{ width: 64, ...QTY_INPUT_SX }}
-            slotProps={{ input: { readOnly }, htmlInput: QTY_HTML_INPUT }}
+            slotProps={{ input: { readOnly }, htmlInput: qtyGridInput(index, columnIndex + 1) }}
           />
         </TableCell>
       ))}
@@ -1613,7 +1673,14 @@ const EquipmentTable = ({
               />
             </Box>
 
-            <TableContainer sx={{ maxHeight: '80vh' }}>
+            <TableContainer
+              sx={{
+                maxHeight: '80vh',
+                // キーで移動したセルが、上の見出し・左の固定列の下に隠れないようにする
+                scrollPaddingTop: HEADER_SCROLL_PADDING,
+                scrollPaddingLeft: fixedWidths.reduce((sum, width) => sum + width, 0),
+              }}
+            >
               <Table
                 ref={tableRef}
                 stickyHeader
@@ -1661,7 +1728,7 @@ const EquipmentTable = ({
                     </SortableContext>
                   </TableRow>
                 </TableHead>
-                <TableBody>
+                <TableBody onKeyDown={handleQtyGridKeyDown}>
                   <SortableContext
                     items={rows.map((row) => toRowDragId(row.id))}
                     strategy={verticalListSortingStrategy}
