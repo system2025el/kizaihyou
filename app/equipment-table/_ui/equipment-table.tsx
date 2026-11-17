@@ -615,6 +615,8 @@ type EquipmentRowViewProps = {
   onInsertRowBelow: () => void;
   /** ドラッグ中の親の行と一緒に動く付属品か（薄く表示して、一緒に動くことを示す） */
   movingWithParent?: boolean;
+  /** 機材の種類（部門名）。部門が分からなければ空文字 */
+  kindNameOf: (kizai: KizaiOption) => string;
   /** 在庫列に出す内容（課題A-8） */
   stock: StockCell;
 };
@@ -634,6 +636,7 @@ const EquipmentRowView = ({
   onInsertRowBelow,
   movingWithParent = false,
   stock,
+  kindNameOf,
 }: EquipmentRowViewProps) => {
   const [insertMenuAnchor, setInsertMenuAnchor] = useState<HTMLElement | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -784,7 +787,9 @@ const EquipmentRowView = ({
             }}
             onChange={(_event, value) => {
               if (value && typeof value !== 'string') {
-                onUpdateRow({ name: value.kizaiNam, kizaiId: value.kizaiId });
+                // 機材マスタから選んだら、種類にもその機材の部門名を入れる（機材追加ダイアログで足した行と同じ）。
+                // 部門が分からない機材なら、入っている種類はそのままにする
+                onUpdateRow({ name: value.kizaiNam, kizaiId: value.kizaiId, kind: kindNameOf(value) || row.kind });
                 return;
               }
               onUpdateRow({ name: value ?? '', kizaiId: null });
@@ -1284,6 +1289,7 @@ const EquipmentTable = ({
     () => new Map(kizaiKindOptions.map((bumon) => [bumon.bumonId, bumon.bumonNam])),
     [kizaiKindOptions]
   );
+  const kindNameOf = (kizai: KizaiOption) => (kizai.bumonId === null ? '' : (bumonNamById.get(kizai.bumonId) ?? ''));
 
   /**
    * 機材追加ダイアログで選んだ機材を行として足す。種類は機材の部門名を入れる（「種類」欄で選んだときと同じ値）。
@@ -2043,6 +2049,7 @@ const EquipmentTable = ({
                         onInsertRowBelow={() => insertRowBelow(row.id)}
                         movingWithParent={followingRowIds.has(row.id)}
                         stock={describeStock(row)}
+                        kindNameOf={kindNameOf}
                       />
                     ))}
                   </SortableContext>
