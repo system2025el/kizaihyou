@@ -36,6 +36,7 @@ import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import RedoIcon from '@mui/icons-material/Redo';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
 import SendIcon from '@mui/icons-material/Send';
 import TaskAltIcon from '@mui/icons-material/TaskAlt';
@@ -67,6 +68,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import Link from 'next/link';
@@ -80,6 +82,7 @@ import {
   EquipmentTableDetail,
   exportEquipmentTableExcel,
   exportEquipmentTablePdf,
+  fetchEquipmentTableStock,
   saveEquipmentTable,
 } from '@/app/_lib/equipment-table/funcs';
 import { fetchEditStatus, forceStopEditing } from '@/app/_lib/equipment-table/lock-funcs';
@@ -256,7 +259,8 @@ const toSnapshot = (head: EquipmentTableHead, columns: EquipmentColumn[], rows: 
 // 入力欄が列の外へはみ出し、固定列の境目の線をまたいでしまう
 // 名称は長い機材名（ケーブルの長さなど末尾に付く情報）が切れないよう広めに取る（課題A-1）。
 // それでも収まらない名前は、マウスを載せると全体が見える
-const FIXED_COLUMN_WIDTHS = [165, 140, 320, 60, 70, 70, 80] as const;
+// 在庫（index 4）はTOTALの左。期間中の在庫と、足りないことが見比べやすいよう隣に置く（課題A-8）
+const FIXED_COLUMN_WIDTHS = [165, 140, 320, 60, 76, 70, 70, 80] as const;
 const LAST_FIXED_COLUMN = FIXED_COLUMN_WIDTHS.length - 1;
 
 /**
@@ -324,7 +328,7 @@ const toFixedColumnVars = (widths: number[]) => {
  * 見出しの固定列は縦横どちらにスクロールしても一番上に来る必要がある。
  */
 const fixedCellSx = (index: number, header = false) => ({
-  position: 'sticky',
+  position: 'sticky' as const,
   left: `var(--fixed-left-${index})`,
   width: `var(--fixed-w-${index})`,
   minWidth: `var(--fixed-w-${index})`,
@@ -467,6 +471,28 @@ const FOCUSED_CELL_SX = {
   '&:focus-within .row-number': { color: 'primary.main', fontWeight: 'bold' },
 } as const;
 
+/** 在庫列の1セル分の表示（課題A-8） */
+type StockCell = {
+  text: string;
+  /** この機材表の合計が在庫を超えている（足りない） */
+  short: boolean;
+  /** 在庫そのものがマイナス（他の受注で既に足りていない） */
+  negative: boolean;
+  /** 出していない・確認中など、数字ではない表示 */
+  muted: boolean;
+  /** マウスを載せたときの説明 */
+  title: string;
+};
+
+/** 在庫が足りない行の、在庫・TOTALのセルの背景（固定列なので不透明な色にする） */
+const SHORTAGE_CELL_SX = { bgcolor: '#FFEBEE' } as const;
+
+/**
+ * 出庫日・入庫日や機材が変わってから在庫を取りに行くまでの待ち時間。
+ * 日付は1桁打つたびに値が変わるので、入力が落ち着いてから1回だけ取る。
+ */
+const STOCK_FETCH_DELAY_MS = 800;
+
 /** キーで移動したセルが固定列や見出しの下に隠れないよう、スクロールに余白を取る（見出しの行の高さ） */
 const HEADER_SCROLL_PADDING = 48;
 
@@ -589,6 +615,8 @@ type EquipmentRowViewProps = {
   onInsertRowBelow: () => void;
   /** ドラッグ中の親の行と一緒に動く付属品か（薄く表示して、一緒に動くことを示す） */
   movingWithParent?: boolean;
+  /** 在庫列に出す内容（課題A-8） */
+  stock: StockCell;
 };
 
 const EquipmentRowView = ({
@@ -605,6 +633,7 @@ const EquipmentRowView = ({
   onAddKizaiBelow,
   onInsertRowBelow,
   movingWithParent = false,
+  stock,
 }: EquipmentRowViewProps) => {
   const [insertMenuAnchor, setInsertMenuAnchor] = useState<HTMLElement | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -772,13 +801,33 @@ const EquipmentRowView = ({
           onSave={(remark) => onUpdateRow({ remark })}
         />
       </TableCell>
-      <TableCell align="right" sx={fixedCellSx(4)}>
-        <Typography variant="body2">{getTotal(row)}</Typography>
+      <TableCell
+        align="right"
+        title={stock.title}
+        sx={{
+          ...fixedCellSx(4),
+          px: 1,
+          color: stock.short || stock.negative ? 'error.main' : stock.muted ? 'text.disabled' : undefined,
+          ...(stock.short && SHORTAGE_CELL_SX),
+        }}
+      >
+        <Typography variant="body2" fontWeight={stock.short ? 'bold' : undefined}>
+          {stock.text}
+        </Typography>
       </TableCell>
-      <TableCell align="right" sx={fixedCellSx(5)}>
+      <TableCell
+        align="right"
+        title={stock.short ? stock.title : undefined}
+        sx={{ ...fixedCellSx(5), ...(stock.short && { ...SHORTAGE_CELL_SX, color: 'error.main' }) }}
+      >
+        <Typography variant="body2" fontWeight={stock.short ? 'bold' : undefined}>
+          {getTotal(row)}
+        </Typography>
+      </TableCell>
+      <TableCell align="right" sx={fixedCellSx(6)}>
         <Typography variant="body2">{getActiveSum(row)}</Typography>
       </TableCell>
-      <TableCell align="center" sx={{ ...fixedCellSx(6), px: 1 }}>
+      <TableCell align="center" sx={{ ...fixedCellSx(7), px: 1 }}>
         <TextField
           value={row.spare}
           onChange={(e) => onUpdateRow({ spare: toQtyInput(e.target.value) })}
@@ -1128,6 +1177,101 @@ const EquipmentTable = ({
 
   // 申請にだけ必要な入力チェック（保存は書きかけでもできる）
   const requestErrors = useMemo(() => validateForRequest(head, rows), [head, rows]);
+
+  /*
+   * 在庫列（課題A-8）。出庫日〜入庫日で一番少ない日の在庫を機材管理から取り、この機材表の合計と比べる。
+   * 取りに行くのは、画面を開いたとき・出庫日／入庫日を変えたとき・機材を変えたとき・「在庫を再確認」を
+   * 押したときだけ。数量を打っても取りに行かない（比べるのは画面の中）。
+   * 出庫日・入庫日のどちらかが空、または入庫日が出庫日より前なら取りに行かず、在庫列は空けておく。
+   */
+  const stockPeriod = useMemo(() => {
+    if (!head.shippedAt || !head.returnedAt) {
+      return { ready: false, help: '出庫日・入庫日を両方入れると、期間中で一番少ない日の在庫を表示します。' };
+    }
+    if (head.shippedAt > head.returnedAt) {
+      return { ready: false, help: '入庫日が出庫日より前になっているため、在庫を表示できません。' };
+    }
+    return { ready: true, help: '' };
+  }, [head.shippedAt, head.returnedAt]);
+  const stockKizaiIds = useMemo(
+    () => Array.from(new Set(rows.flatMap((row) => (row.kizaiId === null ? [] : [row.kizaiId])))).sort((a, b) => a - b),
+    [rows]
+  );
+  const stockKizaiCount = stockKizaiIds.length;
+  // 何を取りに行くかを1本の文字列にする。行の入力のたびに配列が作り直されても、中身が同じなら取り直さない
+  const stockRequestKey =
+    stockPeriod.ready && stockKizaiCount > 0 ? `${head.shippedAt}|${head.returnedAt}|${stockKizaiIds.join(',')}` : null;
+  const [stock, setStock] = useState<{ key: string; byKizaiId: Record<number, number>; at: string } | null>(null);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockError, setStockError] = useState('');
+  const [stockReloadCount, setStockReloadCount] = useState(0);
+  useEffect(() => {
+    if (stockRequestKey === null) return;
+    const [fromDat, toDat, idsText] = stockRequestKey.split('|');
+    let cancelled = false;
+    setStockLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const byKizaiId = await fetchEquipmentTableStock(kizaihyouId, idsText.split(',').map(Number), fromDat, toDat);
+        if (cancelled) return;
+        const at = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit' }).format(new Date());
+        setStock({ key: stockRequestKey, byKizaiId, at });
+        setStockError('');
+      } catch {
+        if (!cancelled) setStockError('機材管理から在庫を取得できませんでした。「在庫を再確認」で取り直せます。');
+      } finally {
+        if (!cancelled) setStockLoading(false);
+      }
+    }, STOCK_FETCH_DELAY_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [stockRequestKey, stockReloadCount, kizaihyouId]);
+
+  /** 機材ごとの、この機材表の合計（同じ機材が複数の行にあれば足す） */
+  const requestedByKizaiId = useMemo(() => {
+    const requested = new Map<number, number>();
+    for (const row of rows) {
+      if (row.kizaiId !== null) requested.set(row.kizaiId, (requested.get(row.kizaiId) ?? 0) + getTotal(row));
+    }
+    return requested;
+  }, [rows]);
+  const stockReady = stock !== null && stock.key === stockRequestKey;
+  const describeStock = (row: EquipmentRow): StockCell => {
+    const blank = { text: '', short: false, negative: false, muted: true, title: '' };
+    if (row.kizaiId === null) {
+      return row.name
+        ? { ...blank, text: '-', title: '機材マスタから選んでいない名称のため、在庫を確かめられません。' }
+        : blank;
+    }
+    if (!stockPeriod.ready) return { ...blank, text: '－', title: stockPeriod.help };
+    if (!stockReady) return { ...blank, text: '…', title: '在庫を確認しています。' };
+    const qty = stock.byKizaiId[row.kizaiId];
+    if (qty === undefined) return { ...blank, text: '-', title: '機材管理の機材マスタに無い機材です。' };
+    const requested = requestedByKizaiId.get(row.kizaiId) ?? 0;
+    const short = requested > 0 && requested > qty;
+    return {
+      text: String(qty),
+      short,
+      negative: qty < 0,
+      muted: false,
+      title:
+        `出庫日〜入庫日で一番少ない日の在庫：${qty}（${stock.at}時点）` +
+        (short ? `\nこの機材表の合計：${requested}（${requested - qty}不足）` : ''),
+    };
+  };
+  const shortageCount = stockReady
+    ? stockKizaiIds.filter((kizaiId) => {
+        const qty = stock.byKizaiId[kizaiId];
+        const requested = requestedByKizaiId.get(kizaiId) ?? 0;
+        return qty !== undefined && requested > 0 && requested > qty;
+      }).length
+    : 0;
+  const stockHeaderHelp = !stockPeriod.ready
+    ? stockPeriod.help
+    : `出庫日〜入庫日で一番少ない日の在庫です（機材管理の在庫${stockReady ? `、${stock.at}時点` : ''}）。` +
+      'この機材表の合計（TOTAL）が在庫を超える機材は赤く表示します。数量を変えても取り直しません。';
 
   const addRow = () => {
     undoHistory.record();
@@ -1713,6 +1857,18 @@ const EquipmentTable = ({
               : '受注部担当者として閲覧しています（この機材表のメンバーではないため編集できません）。'}
           </Alert>
         )}
+        {stockError && (
+          <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setStockError('')}>
+            {stockError}
+          </Alert>
+        )}
+        {shortageCount > 0 && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            在庫が足りない機材が{shortageCount}
+            件あります（在庫列とTOTALが赤い行）。在庫は出庫日〜入庫日で一番少ない日の数で、
+            {stock?.at}時点のものです。
+          </Alert>
+        )}
         {statusReadOnly && (
           <Alert severity="info" sx={{ mb: 2 }}>
             {status === '完了'
@@ -1825,13 +1981,28 @@ const EquipmentTable = ({
                     <TableCell align="center" sx={fixedCellSx(3, true)}>
                       備考
                     </TableCell>
-                    <TableCell align="right" sx={fixedCellSx(4, true)}>
-                      TOTAL
+                    <TableCell align="right" sx={{ ...fixedCellSx(4, true), px: 1 }}>
+                      <Box display="flex" alignItems="center" justifyContent="flex-end" gap={0.25}>
+                        <Tooltip title={stockHeaderHelp}>
+                          <span>在庫</span>
+                        </Tooltip>
+                        <ToolbarIconButton
+                          label="在庫を再確認"
+                          icon={<RefreshIcon sx={{ fontSize: 16 }} />}
+                          size="small"
+                          sx={{ p: 0.25 }}
+                          onClick={() => setStockReloadCount((count) => count + 1)}
+                          disabled={!stockPeriod.ready || stockKizaiCount === 0 || stockLoading}
+                        />
+                      </Box>
                     </TableCell>
                     <TableCell align="right" sx={fixedCellSx(5, true)}>
+                      TOTAL
+                    </TableCell>
+                    <TableCell align="right" sx={fixedCellSx(6, true)}>
                       ACTIVE
                     </TableCell>
-                    <TableCell align="center" sx={{ ...fixedCellSx(6, true), px: 1 }}>
+                    <TableCell align="center" sx={{ ...fixedCellSx(7, true), px: 1 }}>
                       SPARE
                     </TableCell>
                     <SortableContext
@@ -1871,6 +2042,7 @@ const EquipmentTable = ({
                         onAddKizaiBelow={() => setKizaiAddTarget({ afterRowId: row.id })}
                         onInsertRowBelow={() => insertRowBelow(row.id)}
                         movingWithParent={followingRowIds.has(row.id)}
+                        stock={describeStock(row)}
                       />
                     ))}
                   </SortableContext>

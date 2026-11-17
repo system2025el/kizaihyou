@@ -11,6 +11,7 @@ import { Pool } from 'pg';
  * **接続ロールは`postgres`で、kikikanの全テーブルに対して何でもできてしまう。**
  * 触ってよいのは受注まわり（t_juchu_head / t_juchu_kizai_head /
  * t_juchu_kizai_meisai / t_juchu_kizai_honbanbi / t_juchu_kizai_nyushuko）だけ。
+ * 参照では、PostgRESTで集計できない在庫（期間中の最少在庫、`v-zaiko-qty-min.ts`）にも使う。
  * サーバー専用（`NEXT_PUBLIC_`を付けない）で、クライアントコンポーネントから
  * 絶対にimportしないこと。
  *

@@ -5,6 +5,7 @@ import { CurrentUser } from '../auth/types';
 import { selectKikikanBumonList } from '../db/kikikan/m-bumon';
 import { selectKikikanKizaiList } from '../db/kikikan/m-kizai';
 import { selectKikikanKizaiLstByIds, selectKikikanKizaiSetList } from '../db/kikikan/m-kizai-set';
+import { selectKikikanMinZaikoQty } from '../db/kikikan/v-zaiko-qty-min';
 import {
   insertKizaihyou,
   KizaihyouContentInput,
@@ -756,4 +757,59 @@ export const fetchKizaiKindOptions = async (): Promise<BumonOption[]> => {
   const { data, error } = await selectKikikanBumonList();
   if (error) throw new Error(`[fetchKizaiKindOptions] kikikanの部門マスタ取得に失敗しました: ${error.message}`);
   return (data ?? []).map((bumon) => ({ bumonId: bumon.bumon_id, bumonNam: bumon.bumon_nam }));
+};
+
+/** 在庫を確かめられる期間の上限（日）。誤った日付で数年分を集計させないため */
+const STOCK_MAX_DAYS = 366;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 機材表画面の「在庫」列（課題A-8）に出す、出庫日〜入庫日で一番少ない日の在庫を取得する関数。
+ *
+ * 画面を開いたとき・出庫日／入庫日を変えたとき・機材を変えたとき・「在庫を再確認」を押したときだけ呼ぶ
+ * （数量の入力では呼ばない。在庫との比較は画面の中で行う）。リアルタイムの在庫ではない。
+ * 出庫日・入庫日のどちらかが空なら画面側で呼ばない。
+ *
+ * 連携済みの機材表は、機材管理に立てている自分の引き当てを足し戻した在庫を返す（二重に引かないため）。
+ * 受注番号は画面から受け取らず、機材表から引き直す。
+ *
+ * @param kizaihyouId 機材表ID（新規作成でまだ保存していなければnull＝未連携）
+ * @param kizaiIds 対象の機材ID（kikikanのm_kizai.kizai_id）
+ * @param fromDat 出庫日（YYYY-MM-DD）
+ * @param toDat 入庫日（YYYY-MM-DD）
+ * @returns 機材ID→期間中の最少在庫。kikikanのマスタに無い機材は含まれない
+ */
+export const fetchEquipmentTableStock = async (
+  kizaihyouId: number | null,
+  kizaiIds: number[],
+  fromDat: string,
+  toDat: string
+): Promise<Record<number, number>> => {
+  let juchuHeadId: number | null = null;
+  let juchuKizaiHeadId: number | null = null;
+  if (kizaihyouId === null) {
+    await requireCurrentUser();
+  } else {
+    await requireKizaihyouRole(kizaihyouId, KIZAIHYOU_ROLE.閲覧);
+    const { data: head, error } = await selectKizaihyouHead(kizaihyouId);
+    if (error) throw new Error(`[fetchEquipmentTableStock] 機材表の取得に失敗しました: ${error.message}`);
+    juchuHeadId = head?.juchu_head_id ?? null;
+    juchuKizaiHeadId = head?.juchu_kizai_head_id ?? null;
+  }
+
+  if (!ISO_DATE.test(fromDat) || !ISO_DATE.test(toDat) || fromDat > toDat) return {};
+  const days = (Date.parse(toDat) - Date.parse(fromDat)) / 86_400_000;
+  if (days > STOCK_MAX_DAYS) throw new Error(`在庫を確かめられるのは${STOCK_MAX_DAYS}日までです。`);
+
+  const ids = Array.from(new Set(kizaiIds.filter((id) => Number.isInteger(id))));
+  // 連携していない（どちらかが欠けている）なら足し戻さない
+  const linked = juchuHeadId !== null && juchuKizaiHeadId !== null;
+  const stock = await selectKikikanMinZaikoQty(
+    ids,
+    fromDat,
+    toDat,
+    linked ? juchuHeadId : null,
+    linked ? juchuKizaiHeadId : null
+  );
+  return Object.fromEntries(stock);
 };
