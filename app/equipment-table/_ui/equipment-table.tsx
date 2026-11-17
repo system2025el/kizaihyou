@@ -26,6 +26,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import RedoIcon from '@mui/icons-material/Redo';
 import SaveIcon from '@mui/icons-material/Save';
 import SendIcon from '@mui/icons-material/Send';
 import TaskAltIcon from '@mui/icons-material/TaskAlt';
@@ -108,6 +109,7 @@ import { ToolbarIconButton } from '@/app/_ui/toolbar-icon-button';
 import KizaiAddDialog, { AddedKizai } from './kizai-add-dialog';
 import MembersDialog from './members-dialog';
 import { LockLostReason, useEditLock } from './use-edit-lock';
+import { useUndoHistory } from './use-undo-history';
 
 /** 未保存の行・列に付ける一時id。保存するとDBの採番したidに置き換わる */
 let tempIdCounter = 0;
@@ -139,6 +141,21 @@ const createRow = (): EquipmentRow => ({
 });
 
 const createColumn = (label: string): EquipmentColumn => ({ id: createTempId('col'), label });
+
+/** 元に戻す／やり直すで差し替える、画面の内容一式 */
+type SheetState = { head: EquipmentTableHead; columns: EquipmentColumn[]; rows: EquipmentRow[] };
+
+/**
+ * 行の書き換えのうち、続けて入力するもの（文字・数量）。同じ欄への続けての入力は「元に戻す」1回分にまとめる。
+ * それ以外（インデントの切り替え・備考の保存など）は1回ずつ戻せるようにする。
+ */
+const TYPING_ROW_FIELDS = new Set<keyof EquipmentRow>(['kind', 'name', 'kizaiId', 'spare']);
+const toRowUndoKey = (rowId: string, patch: Partial<EquipmentRow>) => {
+  const fields = Object.keys(patch) as (keyof EquipmentRow)[];
+  if (!fields.every((field) => TYPING_ROW_FIELDS.has(field))) return null;
+  // 名称は入力（name・kizaiId=null）と候補の選択（name・kizaiId）で同じ欄として扱う
+  return `row:${rowId}:${fields.includes('name') ? 'name' : fields.sort().join(',')}`;
+};
 
 /** まだ保存していない機材表の初期値 */
 const EMPTY_HEAD: EquipmentTableHead = {
@@ -803,6 +820,14 @@ const EquipmentTable = ({
   const [head, setHead] = useState<EquipmentTableHead>(detail?.head ?? EMPTY_HEAD);
   const [columns, setColumns] = useState<EquipmentColumn[]>(detail?.columns ?? createInitialColumns);
   const [rows, setRows] = useState<EquipmentRow[]>(detail?.rows ?? createInitialRows);
+  /** 元に戻す／やり直す（課題A-11）。内容を書き換える操作は、書き換える直前にundoHistory.recordを呼ぶ */
+  const restoreSheet = useCallback((state: SheetState) => {
+    setHead(state.head);
+    setColumns(state.columns);
+    setRows(state.rows);
+  }, []);
+  const undoHistory = useUndoHistory<SheetState>({ head, columns, rows }, restoreSheet);
+  const { undo: undoSheet, redo: redoSheet, reset: resetUndoHistory } = undoHistory;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -936,6 +961,28 @@ const EquipmentTable = ({
   const editing = kizaihyouId === null || editLock.editing;
   const readOnly = statusReadOnly || !editing;
 
+  /**
+   * Ctrl+Z（元に戻す）・Ctrl+Y / Ctrl+Shift+Z（やり直す）。入力欄の中でも画面全体の履歴で戻す
+   * （入力欄ごとのブラウザ標準の取り消しは、Reactで値を管理している欄では当てにならないため）。
+   * ダイアログ（備考・申請・機材追加など）の中は対象外にして、そこの入力欄の標準の動きに任せる。
+   */
+  useEffect(() => {
+    if (readOnly) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing) return;
+      const key = event.key.toLowerCase();
+      const isUndo = key === 'z' && !event.shiftKey;
+      const isRedo = key === 'y' || (key === 'z' && event.shiftKey);
+      if (!isUndo && !isRedo) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
+      event.preventDefault();
+      if (isUndo) undoSheet();
+      else redoSheet();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [readOnly, undoSheet, redoSheet]);
+
   // 申請・取り下げ・承認などで状態が変わって編集できなくなったら、ロックも手放す
   useEffect(() => {
     if (statusReadOnly && editLock.editing) void editLock.stop();
@@ -945,6 +992,8 @@ const EquipmentTable = ({
   // 編集中で保存していない変更があるときは、入力を消さないよう反映しない（forceReloadRefを立てたときを除く）
   const isDirtyRef = useRef(isDirty);
   isDirtyRef.current = isDirty;
+  const currentSnapshotRef = useRef(currentSnapshot);
+  currentSnapshotRef.current = currentSnapshot;
   const forceReloadRef = useRef(false);
   const firstDetailRef = useRef(true);
   useEffect(() => {
@@ -954,6 +1003,9 @@ const EquipmentTable = ({
     }
     if (!detail || (isDirtyRef.current && !forceReloadRef.current)) return;
     forceReloadRef.current = false;
+    // 自分の保存の読み直しなら内容は画面と同じなので、元に戻すの履歴は残す（保存後も戻せるように）。
+    // 他の人の保存・「最新を読み込む」で中身が変わったときは、古い内容へ戻せてしまわないよう捨てる
+    if (toSnapshot(detail.head, detail.columns, detail.rows) !== currentSnapshotRef.current) resetUndoHistory();
     setHead(detail.head);
     setColumns(detail.columns);
     setRows(detail.rows);
@@ -961,7 +1013,7 @@ const EquipmentTable = ({
     setContentVer(detail.contentVer);
     setTantoUserIds(detail.tantoUserIds);
     setConflict(false);
-  }, [detail]);
+  }, [detail, resetUndoHistory]);
 
   /** 入力中の内容を捨てて、最新の内容を読み込む */
   const reloadLatest = () => {
@@ -1052,7 +1104,10 @@ const EquipmentTable = ({
   // 申請にだけ必要な入力チェック（保存は書きかけでもできる）
   const requestErrors = useMemo(() => validateForRequest(head, rows), [head, rows]);
 
-  const addRow = () => setRows((prev) => [...prev, createRow()]);
+  const addRow = () => {
+    undoHistory.record();
+    setRows((prev) => [...prev, createRow()]);
+  };
 
   // 機材追加ダイアログの重複確認に使う
   const existingKizaiIds = useMemo(() => rows.flatMap((row) => (row.kizaiId === null ? [] : [row.kizaiId])), [rows]);
@@ -1072,6 +1127,7 @@ const EquipmentTable = ({
     const afterRowId = kizaiAddTarget?.afterRowId ?? null;
     setKizaiAddTarget(null);
     if (!kizai.length) return;
+    undoHistory.record();
     setRows((prev) => {
       // ダイアログを開いている間に対象の行が消えることは無いが、念のため見つからなければ既定の位置にする
       let lastIndex = afterRowId === null ? -1 : prev.findIndex((row) => row.id === afterRowId);
@@ -1091,7 +1147,10 @@ const EquipmentTable = ({
     });
     setMessage(`機材を${kizai.length}行追加しました。`);
   };
-  const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
+  const removeRow = (id: string) => {
+    undoHistory.record();
+    setRows((prev) => prev.filter((row) => row.id !== id));
+  };
 
   /**
    * 行・列の削除ボタン。入力のある行・列は確認を出してから消す（課題A-10）。
@@ -1131,15 +1190,23 @@ const EquipmentTable = ({
     if (removeTarget.type === 'row') removeRow(removeTarget.id);
     else removeColumn(removeTarget.id);
     setRemoveTarget(null);
+    // 確認を出すほどの削除なので、戻せることを知らせる（課題A-11）
+    setMessage(`${removeTarget.type === 'row' ? '行' : '列'}を削除しました。「元に戻す」（Ctrl+Z）で戻せます。`);
   };
-  const insertRowBelow = (id: string) =>
+  const insertRowBelow = (id: string) => {
+    undoHistory.record();
     setRows((prev) => {
       const index = prev.findIndex((row) => row.id === id);
       return [...prev.slice(0, index + 1), createRow(), ...prev.slice(index + 1)];
     });
+  };
 
-  const addColumn = () => setColumns((prev) => [...prev, createColumn('')]);
+  const addColumn = () => {
+    undoHistory.record();
+    setColumns((prev) => [...prev, createColumn('')]);
+  };
   const removeColumn = (id: string) => {
+    undoHistory.record();
     setColumns((prev) => prev.filter((column) => column.id !== id));
     setRows((prev) =>
       prev.map((row) => {
@@ -1156,6 +1223,7 @@ const EquipmentTable = ({
 
     const activeId = fromDragId(String(active.id));
     const overId = fromDragId(String(over.id));
+    undoHistory.record();
 
     if (isRowDragId(String(active.id))) {
       setRows((prev) => {
@@ -1176,14 +1244,22 @@ const EquipmentTable = ({
   };
 
   const updateRow = (id: string, patch: Partial<EquipmentRow>) => {
+    undoHistory.record(toRowUndoKey(id, patch));
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   };
 
   const updateQty = (rowId: string, columnId: string, value: string) => {
+    undoHistory.record(`qty:${rowId}:${columnId}`);
     setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, qty: { ...row.qty, [columnId]: value } } : row)));
   };
 
+  const updateHead = (field: keyof EquipmentTableHead, value: string) => {
+    undoHistory.record(`head:${field}`);
+    setHead((prev) => ({ ...prev, [field]: value }));
+  };
+
   const updateColumnLabel = (id: string, label: string) => {
+    undoHistory.record(`col:${id}`);
     setColumns((prev) => prev.map((column) => (column.id === id ? { ...column, label } : column)));
   };
 
@@ -1469,6 +1545,19 @@ const EquipmentTable = ({
               />
             )}
             <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+            {/* 誤って消した行・列や入力を戻す（課題A-11）。履歴は画面の中だけで、保存しても消えない */}
+            <ToolbarIconButton
+              label="元に戻す（Ctrl+Z）"
+              icon={<UndoIcon />}
+              onClick={undoHistory.undo}
+              disabled={readOnly || !undoHistory.canUndo}
+            />
+            <ToolbarIconButton
+              label="やり直す（Ctrl+Y）"
+              icon={<RedoIcon />}
+              onClick={undoHistory.redo}
+              disabled={readOnly || !undoHistory.canRedo}
+            />
             {kizaihyouId !== null &&
               canEditRole &&
               !statusReadOnly &&
@@ -1626,7 +1715,7 @@ const EquipmentTable = ({
               <TextField
                 label="公演名"
                 value={head.eventName}
-                onChange={(e) => setHead({ ...head, eventName: e.target.value })}
+                onChange={(e) => updateHead('eventName', e.target.value)}
                 size="small"
                 sx={{ minWidth: 260 }}
                 slotProps={{ input: { readOnly } }}
@@ -1634,7 +1723,7 @@ const EquipmentTable = ({
               <TextField
                 label="場所"
                 value={head.place}
-                onChange={(e) => setHead({ ...head, place: e.target.value })}
+                onChange={(e) => updateHead('place', e.target.value)}
                 size="small"
                 sx={{ minWidth: 200 }}
                 slotProps={{ input: { readOnly } }}
@@ -1642,7 +1731,7 @@ const EquipmentTable = ({
               <TextField
                 label="顧客名"
                 value={head.clientName}
-                onChange={(e) => setHead({ ...head, clientName: e.target.value })}
+                onChange={(e) => updateHead('clientName', e.target.value)}
                 size="small"
                 sx={{ minWidth: 200 }}
                 slotProps={{ input: { readOnly } }}
@@ -1650,7 +1739,7 @@ const EquipmentTable = ({
               <TextField
                 label="出庫日"
                 value={head.shippedAt}
-                onChange={(e) => setHead({ ...head, shippedAt: e.target.value })}
+                onChange={(e) => updateHead('shippedAt', e.target.value)}
                 size="small"
                 type="date"
                 slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
@@ -1658,7 +1747,7 @@ const EquipmentTable = ({
               <TextField
                 label="入庫日"
                 value={head.returnedAt}
-                onChange={(e) => setHead({ ...head, returnedAt: e.target.value })}
+                onChange={(e) => updateHead('returnedAt', e.target.value)}
                 size="small"
                 type="date"
                 slotProps={{ inputLabel: { shrink: true }, input: { readOnly } }}
@@ -1666,7 +1755,7 @@ const EquipmentTable = ({
               <TextField
                 label="備考"
                 value={head.memo}
-                onChange={(e) => setHead({ ...head, memo: e.target.value })}
+                onChange={(e) => updateHead('memo', e.target.value)}
                 size="small"
                 sx={{ minWidth: 280, flexGrow: 1 }}
                 slotProps={{ input: { readOnly } }}
