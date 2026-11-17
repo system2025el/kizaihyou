@@ -41,6 +41,7 @@ import {
   SaveResult,
 } from './member';
 import { buildKizaihyouPdf, buildKizaihyouPdfFileName } from './pdf';
+import { parseQty } from './sheet';
 import {
   BumonOption,
   EquipmentColumn,
@@ -180,12 +181,10 @@ const toContentInput = (columns: EquipmentColumn[], rows: EquipmentRow[]): Kizai
     kizaiId: row.kizaiId,
     kizaiNam: row.name,
     mem: row.remark,
-    spareQty: Number(row.spare) || 0,
+    // マイナス・小数は受け付けない（課題A-3）。空欄と同じ扱いにする
+    spareQty: parseQty(row.spare) ?? 0,
     indentNum: row.indent,
-    qty: columns.map((column) => {
-      const value = Number(row.qty[column.id]);
-      return row.qty[column.id] && !Number.isNaN(value) ? value : null;
-    }),
+    qty: columns.map((column) => parseQty(row.qty[column.id])),
   })),
 });
 

@@ -33,7 +33,7 @@ import { useMemo, useState } from 'react';
 
 import { toDiffKey } from '@/app/_lib/equipment-table/diff';
 import { EquipmentTableApproval } from '@/app/_lib/equipment-table/funcs';
-import { getIndentedName } from '@/app/_lib/equipment-table/sheet';
+import { getIndentedName, toQtyInput } from '@/app/_lib/equipment-table/sheet';
 import {
   approveEquipmentTable,
   checkKikikanJuchuLink,
@@ -44,6 +44,7 @@ import {
 import { EquipmentTableHistoryEntry } from '@/app/_lib/equipment-table-list/types';
 import { EquipmentTimeline } from '@/app/_ui/equipment-timeline';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
+import { ToolbarIconButton } from '@/app/_ui/toolbar-icon-button';
 
 import { buildStockDateRange, formatIsoDate, formatMd, isSameDay } from '../_lib/date-utils';
 import { MergePreview } from '../_lib/merge-preview';
@@ -54,6 +55,19 @@ const RANGE_START_COLOR = '#BBDEFB';
 const RANGE_END_COLOR = '#FFF59D';
 const IN_RANGE_COLOR = '#ACB9CA';
 const TOTAL_COLUMN_COLOR = '#E3F2FD';
+
+/**
+ * 1画面に多くの行が見えるよう、セルの上下の余白を詰める（課題B-4）。
+ * 左右の余白は固定列の位置（STICKY_LEFT）に効くので変えない。
+ */
+const DENSE_TABLE_SX = { '& .MuiTableCell-root': { py: 0.25 } } as const;
+
+/**
+ * 在庫の日付列。長期の案件で横スクロールが大変なので、左右の余白と文字を小さくして幅を詰める（課題B-5）。
+ * 在庫は3桁あれば足りる。
+ */
+const DATE_HEAD_CELL_SX = { minWidth: 36, px: 0.5, fontSize: 12 } as const;
+const DATE_CELL_SX = { px: 0.5 } as const;
 
 // 固定列(左側)の累積オフセット。sticky配置に使う。
 const STICKY_LEFT = { select: 0, memo: 40, name: 80, total: 300, ordered: 360, spare: 430, contact: 500 };
@@ -305,9 +319,13 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
           </Box>
         </Box>
         <Box display="flex" gap={1}>
-          <Button startIcon={<ForumIcon />} onClick={() => setTimelineOpen((prev) => !prev)}>
-            タイムライン
-          </Button>
+          {/* 補助的な操作はアイコンだけにする（課題A-13） */}
+          <ToolbarIconButton
+            label="タイムライン（操作履歴・コメント）"
+            icon={<ForumIcon />}
+            color={timelineOpen ? 'primary' : 'default'}
+            onClick={() => setTimelineOpen((prev) => !prev)}
+          />
           <Button
             variant="contained"
             color="success"
@@ -406,7 +424,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
 
       <Box display="flex" gap={2} alignItems="flex-start">
         <TableContainer sx={{ maxHeight: '80vh' }}>
-          <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
+          <Table stickyHeader size="small" sx={{ width: 'max-content', ...DENSE_TABLE_SX }}>
             <TableHead>
               <TableRow>
                 <TableCell
@@ -491,7 +509,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                   <TableCell
                     key={date.getTime()}
                     align="right"
-                    sx={{ minWidth: 56, color: isInRange(date) ? 'primary.main' : 'text.primary' }}
+                    sx={{ ...DATE_HEAD_CELL_SX, color: isInRange(date) ? 'primary.main' : 'text.primary' }}
                   >
                     {formatMd(date)}
                   </TableCell>
@@ -513,7 +531,12 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                     <TableCell
                       sx={{ position: 'sticky', left: STICKY_LEFT.select, zIndex: 1, bgcolor: 'background.paper' }}
                     >
-                      <Checkbox size="small" checked={!!selected[row.id]} onChange={() => toggleSelected(row.id)} />
+                      <Checkbox
+                        size="small"
+                        checked={!!selected[row.id]}
+                        onChange={() => toggleSelected(row.id)}
+                        sx={{ py: 0 }}
+                      />
                     </TableCell>
                     <TableCell
                       sx={{ position: 'sticky', left: STICKY_LEFT.memo, zIndex: 1, bgcolor: 'background.paper' }}
@@ -548,12 +571,11 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                     >
                       <TextField
                         value={row.orderedQty}
-                        onChange={(e) =>
-                          updateRow(row.id, { orderedQty: Number(e.target.value.replace(/\D/g, '')) || 0 })
-                        }
+                        onChange={(e) => updateRow(row.id, { orderedQty: Number(toQtyInput(e.target.value)) || 0 })}
                         variant="standard"
                         size="small"
-                        type="number"
+                        // スピンボタン・ホイールで値が変わらないよう type="number" にしない（機材表画面と同じ）
+                        slotProps={{ htmlInput: { inputMode: 'numeric' } }}
                         // 数字なので入力欄の中も右寄せにする
                         sx={{ width: 56, '& input': { textAlign: 'right' } }}
                       />
@@ -569,12 +591,10 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                     >
                       <TextField
                         value={row.spareQty}
-                        onChange={(e) =>
-                          updateRow(row.id, { spareQty: Number(e.target.value.replace(/\D/g, '')) || 0 })
-                        }
+                        onChange={(e) => updateRow(row.id, { spareQty: Number(toQtyInput(e.target.value)) || 0 })}
                         variant="standard"
                         size="small"
-                        type="number"
+                        slotProps={{ htmlInput: { inputMode: 'numeric' } }}
                         // 数字なので入力欄の中も右寄せにする
                         sx={{ width: 56, '& input': { textAlign: 'right' } }}
                       />
@@ -600,6 +620,7 @@ const EquipmentOrderDetail = ({ approval, stockMap, history, mergePreview }: Pro
                           key={date.getTime()}
                           align="right"
                           sx={{
+                            ...DATE_CELL_SX,
                             bgcolor: getCellColor(date),
                             color: stock !== null && stock < 0 ? 'error.main' : 'text.primary',
                           }}

@@ -2,12 +2,11 @@
 
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import DownloadIcon from '@mui/icons-material/Download';
+import GridOnIcon from '@mui/icons-material/GridOn';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import {
   Alert,
   Box,
-  Button,
   Chip,
   IconButton,
   Paper,
@@ -32,6 +31,7 @@ import {
 } from '@/app/_lib/equipment-table/funcs';
 import { getActiveSum, getIndentedName, getTotal, hasEquipmentRowContent } from '@/app/_lib/equipment-table/sheet';
 import { formatDate } from '@/app/_lib/format';
+import { ToolbarIconButton } from '@/app/_ui/toolbar-icon-button';
 
 type HeadItemProps = {
   label: string;
@@ -113,15 +113,15 @@ const EquipmentTableSnapshotView = ({ detail }: EquipmentTableSnapshotViewProps)
           {detail.user}
         </Typography>
         <Box display="flex" gap={1} ml="auto">
-          <Button startIcon={<ContentCopyIcon />} onClick={handleCopy} disabled={busy}>
-            流用して新規作成
-          </Button>
-          <Button startIcon={<DownloadIcon />} onClick={handleExportExcel} disabled={busy}>
-            Excel出力
-          </Button>
-          <Button startIcon={<PictureAsPdfIcon />} onClick={handleExportPdf} disabled={busy}>
-            PDF出力
-          </Button>
+          {/* 機材表画面と同じく、補助的な操作はアイコンだけにする（課題A-13） */}
+          <ToolbarIconButton
+            label="この内容を流用して新規作成"
+            icon={<ContentCopyIcon />}
+            onClick={handleCopy}
+            disabled={busy}
+          />
+          <ToolbarIconButton label="Excel出力" icon={<GridOnIcon />} onClick={handleExportExcel} disabled={busy} />
+          <ToolbarIconButton label="PDF出力" icon={<PictureAsPdfIcon />} onClick={handleExportPdf} disabled={busy} />
         </Box>
       </Box>
 

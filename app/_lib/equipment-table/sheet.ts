@@ -10,6 +10,34 @@ export const INDENT_CHARA = ' ┗ ';
 export const getIndentedName = (row: EquipmentRow) =>
   row.name ? `${INDENT_CHARA.repeat(row.indent)}${row.name}` : row.name;
 
+/** 数量の桁数の上限（DBのinteger、kikikanの数量列に収まる範囲） */
+const QTY_MAX_DIGITS = 6;
+
+/**
+ * 数量の入力欄に入れられた文字を、数量として受け付ける文字列に直す関数。
+ *
+ * 入力欄は`type="number"`にしていない。スピンボタン（△▽）やマウスのホイール・上下キーで
+ * 値が変わって誤入力が多かったため（課題A-2）。代わりにここで数字以外を落とす。
+ * マイナス・小数点も落ちるので、0以上の整数しか入らない（課題A-3）。
+ * 日本語入力のまま打った全角数字は半角に直す。
+ */
+export const toQtyInput = (value: string) =>
+  value
+    .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/\D/g, '')
+    .replace(/^0+(?=\d)/, '')
+    .slice(0, QTY_MAX_DIGITS);
+
+/**
+ * 保存する数量に直す関数。0以上の整数でなければnull（空欄扱い）にする。
+ * 画面では数字しか入らないが、Server Actionsは直接呼べるのでサーバー側でも確かめる。
+ */
+export const parseQty = (value: string | undefined) => {
+  if (!value) return null;
+  const qty = Number(value);
+  return Number.isInteger(qty) && qty >= 0 ? qty : null;
+};
+
 /** ACTIVE（各ポジションの数量の合計） */
 export const getActiveSum = (row: EquipmentRow) =>
   Object.values(row.qty).reduce((sum, value) => sum + (Number(value) || 0), 0);

@@ -37,17 +37,36 @@ const MAX_POSITION_WIDTH = 56;
 const LINE_COLOR = rgb(0.6, 0.6, 0.6);
 const HEADER_FILL = rgb(0.93, 0.93, 0.93);
 
-/** 機材ごとの固定列（ポジション列の左側） */
+/**
+ * 機材ごとの固定列（ポジション列の左側）。
+ * 名称の幅は実際の機材名の長さに合わせて`NAME_MIN_WIDTH`〜`NAME_MAX_WIDTH`で決める（`measureNameWidth`）。
+ * 機材名が切れて読めないという要望（課題A-12）への対応で、短い名前ばかりの機材表では
+ * ポジション列に幅を回せるよう、常に広く取ることはしない。
+ */
+const NAME_COLUMN_INDEX = 1;
+const NAME_MIN_WIDTH = 150;
+const NAME_MAX_WIDTH = 260;
 const FIXED_COLUMNS = [
-  { label: '種類', width: 90, align: 'left' },
-  { label: '名称', width: 150, align: 'left' },
-  { label: '備考', width: 110, align: 'left' },
+  { label: '種類', width: 80, align: 'left' },
+  { label: '名称', width: NAME_MIN_WIDTH, align: 'left' },
+  { label: '備考', width: 100, align: 'left' },
   { label: 'TOTAL', width: 38, align: 'right' },
   { label: 'ACTIVE', width: 40, align: 'right' },
   { label: 'SPARE', width: 38, align: 'right' },
 ] as const;
 
-const FIXED_WIDTH = FIXED_COLUMNS.reduce((sum, column) => sum + column.width, 0);
+const CELL_PADDING = 3;
+/**
+ * 名称・種類が列に収まらないときは、末尾を省略する前にこの大きさまで文字を縮める。
+ * 機材名は末尾（長さ・本数など）が大事なことが多く、省略すると別の機材と見分けられないため。
+ */
+const MIN_SHRINK_FONT_SIZE = 6;
+
+/** 名称の列幅。一番長い機材名が収まる幅にする（上下限あり） */
+const measureNameWidth = (names: string[], font: PDFFont) => {
+  const longest = names.reduce((max, name) => Math.max(max, font.widthOfTextAtSize(name, FONT_SIZE)), 0);
+  return Math.min(NAME_MAX_WIDTH, Math.max(NAME_MIN_WIDTH, Math.ceil(longest + CELL_PADDING * 2)));
+};
 
 /** pdf-libは折り返しをしないので、収まらない文字列は末尾を省略する */
 const fitText = (text: string, font: PDFFont, size: number, maxWidth: number) => {
@@ -69,15 +88,25 @@ type DrawCellParams = {
   y: number;
   width: number;
   align: 'left' | 'right';
+  /** 収まらないとき、省略する前に文字を縮めるか */
+  shrink?: boolean;
 };
 
-const drawCellText = ({ page, font, text, x, y, width, align }: DrawCellParams) => {
-  const padding = 3;
-  const fitted = fitText(text, font, FONT_SIZE, width - padding * 2);
-  if (!fitted) return;
+const drawCellText = ({ page, font, text, x, y, width, align, shrink = false }: DrawCellParams) => {
+  const maxWidth = width - CELL_PADDING * 2;
+  const single = text.replace(/\r?\n/g, ' ');
+  if (!single) return;
 
-  const textX = align === 'right' ? x + width - padding - font.widthOfTextAtSize(fitted, FONT_SIZE) : x + padding;
-  page.drawText(fitted, { x: textX, y, size: FONT_SIZE, font, color: rgb(0, 0, 0) });
+  // 縮めて収まるなら縮める。下限まで縮めても収まらなければ、下限の大きさで末尾を省略する
+  const fullWidth = font.widthOfTextAtSize(single, FONT_SIZE);
+  const size =
+    shrink && fullWidth > maxWidth
+      ? Math.max(MIN_SHRINK_FONT_SIZE, Math.floor(((FONT_SIZE * maxWidth) / fullWidth) * 10) / 10)
+      : FONT_SIZE;
+  const fitted = fitText(single, font, size, maxWidth);
+
+  const textX = align === 'right' ? x + width - CELL_PADDING - font.widthOfTextAtSize(fitted, size) : x + CELL_PADDING;
+  page.drawText(fitted, { x: textX, y, size, font, color: rgb(0, 0, 0) });
 };
 
 /** 1ページ目に出す公演情報の行（2ページ目以降は出さない） */
@@ -105,13 +134,24 @@ export type KizaihyouPdfInput = {
 export const buildKizaihyouPdf = async ({ kizaihyouCod, head, columns, rows }: KizaihyouPdfInput) => {
   const dataRows = rows.filter(hasEquipmentRowContent);
 
+  const pdfDoc = await PDFDocument.create();
+  pdfDoc.setTitle(`${kizaihyouCod} ${head.eventName}`.trim());
+  pdfDoc.registerFontkit(fontkit);
+  // 名称の列幅を文字の幅から決めるので、レイアウトより先にフォントを読み込む
+  const font = await pdfDoc.embedFont(await fs.readFile(FONT_PATH), { subset: true });
+
+  const fixedWidths = FIXED_COLUMNS.map((column, index) =>
+    index === NAME_COLUMN_INDEX ? measureNameWidth(dataRows.map(getIndentedName), font) : column.width
+  );
+  const fixedWidth = fixedWidths.reduce((sum, width) => sum + width, 0);
+
   // ポジション列の幅からページサイズを決める
   const positionWidthOn = (pageWidth: number) =>
-    columns.length ? Math.min(MAX_POSITION_WIDTH, (pageWidth - MARGIN * 2 - FIXED_WIDTH) / columns.length) : 0;
+    columns.length ? Math.min(MAX_POSITION_WIDTH, (pageWidth - MARGIN * 2 - fixedWidth) / columns.length) : 0;
   const page = columns.length && positionWidthOn(A4_LANDSCAPE.width) < MIN_POSITION_WIDTH ? A3_LANDSCAPE : A4_LANDSCAPE;
   const positionWidth = positionWidthOn(page.width);
 
-  const widths = [...FIXED_COLUMNS.map((column) => column.width), ...columns.map(() => positionWidth)];
+  const widths = [...fixedWidths, ...columns.map(() => positionWidth)];
   const aligns: ('left' | 'right')[] = [
     ...FIXED_COLUMNS.map((column) => column.align),
     ...columns.map(() => 'right' as const),
@@ -135,11 +175,6 @@ export const buildKizaihyouPdf = async ({ kizaihyouCod, head, columns, rows }: K
   const otherCapacity = capacityOf(otherTableTop);
   const pageCount =
     dataRows.length <= firstCapacity ? 1 : 1 + Math.ceil((dataRows.length - firstCapacity) / otherCapacity);
-
-  const pdfDoc = await PDFDocument.create();
-  pdfDoc.setTitle(`${kizaihyouCod} ${head.eventName}`.trim());
-  pdfDoc.registerFontkit(fontkit);
-  const font = await pdfDoc.embedFont(await fs.readFile(FONT_PATH), { subset: true });
 
   for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
     const pdfPage = pdfDoc.addPage([page.width, page.height]);
@@ -215,6 +250,8 @@ export const buildKizaihyouPdf = async ({ kizaihyouCod, head, columns, rows }: K
           y,
           width: widths[index],
           align: aligns[index],
+          // 種類・名称は切れると機材が分からなくなるので、まず縮めて収める
+          shrink: index <= NAME_COLUMN_INDEX,
         });
       });
     });

@@ -17,11 +17,11 @@ import CloseIcon from '@mui/icons-material/Close';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
-import DownloadIcon from '@mui/icons-material/Download';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import EditIcon from '@mui/icons-material/Edit';
 import EditOffIcon from '@mui/icons-material/EditOff';
 import ForumIcon from '@mui/icons-material/Forum';
+import GridOnIcon from '@mui/icons-material/GridOn';
 import GroupIcon from '@mui/icons-material/Group';
 import LibraryAddIcon from '@mui/icons-material/LibraryAdd';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
@@ -83,7 +83,7 @@ import {
   ROLE_LABELS,
   SaveResult,
 } from '@/app/_lib/equipment-table/member';
-import { getActiveSum, getTotal, hasEquipmentRowContent } from '@/app/_lib/equipment-table/sheet';
+import { getActiveSum, getTotal, hasEquipmentRowContent, toQtyInput } from '@/app/_lib/equipment-table/sheet';
 import { BumonOption, EquipmentColumn, EquipmentRow, KizaiOption } from '@/app/_lib/equipment-table/types';
 import { validateForRequest } from '@/app/_lib/equipment-table/validation';
 import {
@@ -103,6 +103,7 @@ import {
 import { useAutoRefresh } from '@/app/_lib/hooks/use-auto-refresh';
 import { EquipmentTimeline } from '@/app/_ui/equipment-timeline';
 import { MemoTooltip } from '@/app/_ui/memo-tooltip';
+import { ToolbarIconButton } from '@/app/_ui/toolbar-icon-button';
 
 import KizaiAddDialog, { AddedKizai } from './kizai-add-dialog';
 import MembersDialog from './members-dialog';
@@ -220,32 +221,169 @@ const toSnapshot = (head: EquipmentTableHead, columns: EquipmentColumn[], rows: 
  */
 // SPAREは入力欄（56px）とセルの左右の余白が収まる幅にする。余白の既定（16pxずつ）のままだと
 // 入力欄が列の外へはみ出し、固定列の境目の線をまたいでしまう
-const FIXED_COLUMN_WIDTHS = [165, 140, 220, 60, 70, 70, 80] as const;
-const FIXED_COLUMN_LEFTS = FIXED_COLUMN_WIDTHS.map((_width, index) =>
-  FIXED_COLUMN_WIDTHS.slice(0, index).reduce((sum, width) => sum + width, 0)
-);
+// 名称は長い機材名（ケーブルの長さなど末尾に付く情報）が切れないよう広めに取る（課題A-1）。
+// それでも収まらない名前は、マウスを載せると全体が見える
+const FIXED_COLUMN_WIDTHS = [165, 140, 320, 60, 70, 70, 80] as const;
 const LAST_FIXED_COLUMN = FIXED_COLUMN_WIDTHS.length - 1;
 
 /**
- * 固定列のセルに付けるsx。
+ * 見出しの右端をドラッグして幅を変えられる固定列（課題A-1）。キーはFIXED_COLUMN_WIDTHSの位置。
+ * 見やすい幅は人や画面の大きさで違うので、幅はブラウザごとに覚える（機材表ごとには持たない。
+ * 別の機材表を開くたびに合わせ直すことになるため）。Excel・PDFの出力には影響しない。
+ */
+const RESIZABLE_COLUMNS: Record<number, { min: number; max: number }> = {
+  1: { min: 80, max: 400 }, // 種類
+  2: { min: 160, max: 800 }, // 名称
+};
+const COLUMN_WIDTH_STORAGE_KEY = 'kizaihyou.equipmentTable.columnWidths';
+
+const clampWidth = (index: number, width: number) =>
+  Math.round(Math.min(RESIZABLE_COLUMNS[index].max, Math.max(RESIZABLE_COLUMNS[index].min, width)));
+
+/** ブラウザに覚えた幅を読む。読めない（プライベートモード等）・壊れているときは既定の幅 */
+const loadFixedColumnWidths = (): number[] => {
+  const widths: number[] = [...FIXED_COLUMN_WIDTHS];
+  try {
+    const saved: unknown = JSON.parse(window.localStorage.getItem(COLUMN_WIDTH_STORAGE_KEY) ?? 'null');
+    if (saved && typeof saved === 'object') {
+      Object.keys(RESIZABLE_COLUMNS).forEach((key) => {
+        const value = (saved as Record<string, unknown>)[key];
+        if (typeof value === 'number' && Number.isFinite(value)) widths[Number(key)] = clampWidth(Number(key), value);
+      });
+    }
+  } catch {
+    // 覚えた幅が使えなくても、既定の幅で表示できれば困らない
+  }
+  return widths;
+};
+
+const saveFixedColumnWidths = (widths: number[]) => {
+  try {
+    const saved = Object.fromEntries(Object.keys(RESIZABLE_COLUMNS).map((key) => [key, widths[Number(key)]]));
+    window.localStorage.setItem(COLUMN_WIDTH_STORAGE_KEY, JSON.stringify(saved));
+  } catch {
+    // 保存できなくても、この画面を開いている間は変えた幅のまま使える
+  }
+};
+
+/**
+ * 固定列の幅と左端の位置をCSS変数にする。表（<table>）に付け、各セルはこの変数を参照する。
+ * 幅を変えると右側の固定列の位置（left）もずれるので、まとめて計算し直す。
+ *
+ * セルごとにpropsで幅を渡さないのは、ドラッグ中に数百行を描き直すと重くなるため。
+ * ドラッグ中は表の要素の変数だけを直接書き換え、離したときにstateへ反映する。
+ */
+const toFixedColumnVars = (widths: number[]) => {
+  const vars: Record<string, string> = {};
+  let left = 0;
+  widths.forEach((width, index) => {
+    vars[`--fixed-w-${index}`] = `${width}px`;
+    vars[`--fixed-left-${index}`] = `${left}px`;
+    left += width;
+  });
+  return vars;
+};
+
+/**
+ * 固定列のセルに付けるsx。幅と位置は表に付けたCSS変数（toFixedColumnVars）から取る。
  * 背景色を付けないと、後ろをスクロールしていくポジションの列が透けて見える。
  * z-indexは、本体の固定列(1) < 見出しの行(stickyHeaderの2・ドラッグ中の列見出し3) < 見出しの固定列(4)。
  * 見出しの固定列は縦横どちらにスクロールしても一番上に来る必要がある。
  */
 const fixedCellSx = (index: number, header = false) => ({
   position: 'sticky',
-  left: FIXED_COLUMN_LEFTS[index],
-  width: FIXED_COLUMN_WIDTHS[index],
-  minWidth: FIXED_COLUMN_WIDTHS[index],
-  maxWidth: FIXED_COLUMN_WIDTHS[index],
+  left: `var(--fixed-left-${index})`,
+  width: `var(--fixed-w-${index})`,
+  minWidth: `var(--fixed-w-${index})`,
+  maxWidth: `var(--fixed-w-${index})`,
   zIndex: header ? 4 : 1,
   bgcolor: 'background.paper',
   // 固定列とスクロールする列の境目が分かるよう、最後の固定列の右に線を引く
   ...(index === LAST_FIXED_COLUMN && { borderRight: 1, borderRightColor: 'divider' }),
 });
 
+type ColumnResizeHandleProps = {
+  /** ドラッグを始めた時点の幅 */
+  width: number;
+  /** ドラッグ中に呼ぶ（画面の見た目だけを変える） */
+  onResize: (width: number) => void;
+  /** 離したときに呼ぶ（stateとブラウザに反映する） */
+  onResizeEnd: (width: number) => void;
+  onReset: () => void;
+  clamp: (width: number) => number;
+};
+
+/**
+ * 固定列の見出しの右端に置く、幅を変えるつまみ。ダブルクリックで既定の幅に戻す。
+ * Pointer Captureでつまみ自身にポインタを捕まえておくので、見出しの外へドラッグしても追従する。
+ */
+const ColumnResizeHandle = ({ width, onResize, onResizeEnd, onReset, clamp }: ColumnResizeHandleProps) => {
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    let current = width;
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch {
+      // 捕まえられなくても、つまみの上で動かしている間は幅を変えられる
+    }
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      current = clamp(width + moveEvent.clientX - startX);
+      onResize(current);
+    };
+    const handleUp = () => {
+      handle.removeEventListener('pointermove', handleMove);
+      handle.removeEventListener('pointerup', handleUp);
+      handle.removeEventListener('pointercancel', handleUp);
+      onResizeEnd(current);
+    };
+    handle.addEventListener('pointermove', handleMove);
+    handle.addEventListener('pointerup', handleUp);
+    handle.addEventListener('pointercancel', handleUp);
+  };
+
+  return (
+    <Box
+      role="separator"
+      aria-orientation="vertical"
+      title="ドラッグで幅を変更（ダブルクリックで元の幅に戻す）"
+      onPointerDown={handlePointerDown}
+      onDoubleClick={onReset}
+      sx={{
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 8,
+        cursor: 'col-resize',
+        touchAction: 'none',
+        // 普段は境目の細い線だけ見せ、マウスを載せたら掴める範囲を色で示す
+        borderRight: 2,
+        borderRightColor: 'divider',
+        '&:hover, &:active': { bgcolor: 'primary.light', opacity: 0.6 },
+      }}
+    />
+  );
+};
+
 /** 数量（SPARE・各ポジション）の入力欄。数字なので右寄せにする */
 const QTY_INPUT_SX = { '& input': { textAlign: 'right' } } as const;
+
+/**
+ * 数量の入力欄のinput属性。`type="number"`はスピンボタン・ホイール・上下キーで値が変わり
+ * 誤入力が多かったので使わない（課題A-2）。数字以外は`toQtyInput`で落とす。
+ * inputModeはタブレットで数字のキーボードを出すため。
+ */
+const QTY_HTML_INPUT = { inputMode: 'numeric' } as const;
+
+/**
+ * 何も入力されていない行の背景色（課題A-6）。区切りに入れた空行や、使っていない行を見分けやすくする。
+ * 固定列は後ろのポジション列が透けないよう背景を塗っているので、不透明な色にする。
+ */
+const EMPTY_ROW_COLOR = 'grey.100';
 
 /** 列名の入力欄の幅。空欄・短い名前は最小幅（数量の入力欄に近い幅）、長すぎる名前は最大幅で止める */
 const COLUMN_LABEL_MIN_WIDTH = 76;
@@ -379,6 +517,7 @@ const EquipmentRowView = ({
     id: toRowDragId(row.id),
     disabled: readOnly,
   });
+  const empty = !hasEquipmentRowContent(row);
 
   return (
     <TableRow
@@ -389,6 +528,8 @@ const EquipmentRowView = ({
         opacity: isDragging ? 0.6 : 1,
         zIndex: isDragging ? 1 : 'auto',
         bgcolor: isDragging ? 'background.paper' : undefined,
+        // 固定列のセルは個別に背景を塗っているので、行ではなくセルごと塗り替える
+        ...(empty && { '& > td': { bgcolor: EMPTY_ROW_COLOR } }),
         // インデントの切り替えは普段は目立たせない（オプションなので）
         '&:hover .indent-toggle': { opacity: 1 },
       }}
@@ -523,7 +664,7 @@ const EquipmentRowView = ({
               }
               onUpdateRow({ name: value ?? '', kizaiId: null });
             }}
-            renderInput={(params) => <TextField {...params} variant="standard" />}
+            renderInput={(params) => <TextField {...params} variant="standard" title={row.name} />}
           />
         </Box>
       </TableCell>
@@ -544,24 +685,22 @@ const EquipmentRowView = ({
       <TableCell align="center" sx={{ ...fixedCellSx(6), px: 1 }}>
         <TextField
           value={row.spare}
-          onChange={(e) => onUpdateRow({ spare: e.target.value })}
+          onChange={(e) => onUpdateRow({ spare: toQtyInput(e.target.value) })}
           variant="standard"
           size="small"
-          type="number"
           sx={{ width: 56, ...QTY_INPUT_SX }}
-          slotProps={{ input: { readOnly } }}
+          slotProps={{ input: { readOnly }, htmlInput: QTY_HTML_INPUT }}
         />
       </TableCell>
       {columns.map((column) => (
         <TableCell key={column.id} align="center">
           <TextField
             value={row.qty[column.id] ?? ''}
-            onChange={(e) => onUpdateQty(column.id, e.target.value)}
+            onChange={(e) => onUpdateQty(column.id, toQtyInput(e.target.value))}
             variant="standard"
             size="small"
-            type="number"
             sx={{ width: 64, ...QTY_INPUT_SX }}
-            slotProps={{ input: { readOnly } }}
+            slotProps={{ input: { readOnly }, htmlInput: QTY_HTML_INPUT }}
           />
         </TableCell>
       ))}
@@ -632,6 +771,41 @@ const EquipmentTable = ({
   /** 版が食い違って保存・申請できなかった（最新を読み込むボタンを出す） */
   const [conflict, setConflict] = useState(false);
   const [confirmEndEdit, setConfirmEndEdit] = useState(false);
+  /** 固定列の幅（種類・名称はドラッグで変えられる）。ブラウザに覚えた幅はマウント後に読む */
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [fixedWidths, setFixedWidths] = useState<number[]>(() => [...FIXED_COLUMN_WIDTHS]);
+  useEffect(() => {
+    // localStorageはサーバー側の描画には無いので、初回の描画は既定の幅で揃えてから差し替える
+    setFixedWidths(loadFixedColumnWidths());
+  }, []);
+  const withFixedWidth = (index: number, width: number) => fixedWidths.map((value, i) => (i === index ? width : value));
+  /** ドラッグ中。表のCSS変数だけを書き換え、行は描き直さない */
+  const previewFixedWidth = (index: number, width: number) => {
+    const table = tableRef.current;
+    if (!table) return;
+    Object.entries(toFixedColumnVars(withFixedWidth(index, width))).forEach(([name, value]) =>
+      table.style.setProperty(name, value)
+    );
+  };
+  const commitFixedWidth = (index: number, width: number) => {
+    const next = withFixedWidth(index, width);
+    setFixedWidths(next);
+    saveFixedColumnWidths(next);
+  };
+  /** 見出しの固定列に付ける、幅を変えるつまみ */
+  const renderResizeHandle = (index: number) => (
+    <ColumnResizeHandle
+      width={fixedWidths[index]}
+      clamp={(width) => clampWidth(index, width)}
+      onResize={(width) => previewFixedWidth(index, width)}
+      onResizeEnd={(width) => commitFixedWidth(index, width)}
+      onReset={() => commitFixedWidth(index, FIXED_COLUMN_WIDTHS[index])}
+    />
+  );
+  /** 削除の確認を出している行・列 */
+  const [removeTarget, setRemoveTarget] = useState<{ type: 'row' | 'column'; id: string; message: string } | null>(
+    null
+  );
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const kindOptions = useMemo(
@@ -858,6 +1032,46 @@ const EquipmentTable = ({
     setMessage(`機材を${kizai.length}行追加しました。`);
   };
   const removeRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
+
+  /**
+   * 行・列の削除ボタン。入力のある行・列は確認を出してから消す（課題A-10）。
+   * 空の行・列まで確認すると、空行を片付けるたびに手間が増えるのでそのまま消す。
+   */
+  const requestRemoveRow = (id: string) => {
+    const index = rows.findIndex((row) => row.id === id);
+    if (index === -1) return;
+    if (!hasEquipmentRowContent(rows[index])) {
+      removeRow(id);
+      return;
+    }
+    setRemoveTarget({
+      type: 'row',
+      id,
+      message: `${index + 1}行目「${rows[index].name || '名称なし'}」を削除しますか？`,
+    });
+  };
+  const requestRemoveColumn = (id: string) => {
+    const column = columns.find((item) => item.id === id);
+    if (!column) return;
+    const qtyCount = rows.filter((row) => (row.qty[id] ?? '') !== '').length;
+    if (!column.label && qtyCount === 0) {
+      removeColumn(id);
+      return;
+    }
+    setRemoveTarget({
+      type: 'column',
+      id,
+      message:
+        `列「${column.label || '見出しなし'}」を削除しますか？` +
+        (qtyCount ? `この列に入力した数量（${qtyCount}行分）も消えます。` : ''),
+    });
+  };
+  const confirmRemove = () => {
+    if (!removeTarget) return;
+    if (removeTarget.type === 'row') removeRow(removeTarget.id);
+    else removeColumn(removeTarget.id);
+    setRemoveTarget(null);
+  };
   const insertRowBelow = (id: string) =>
     setRows((prev) => {
       const index = prev.findIndex((row) => row.id === id);
@@ -1148,7 +1362,53 @@ const EquipmentTable = ({
             )}
             {kizaihyouId !== null && editing && <Chip label="編集中" size="small" color="primary" />}
           </Box>
-          <Box display="flex" gap={1} flexWrap="wrap" justifyContent="flex-end">
+          <Box display="flex" gap={1} flexWrap="wrap" justifyContent="flex-end" alignItems="center">
+            {/* 補助的な操作はアイコンだけにする（課題A-13）。説明はマウスを載せると出る */}
+            <ToolbarIconButton
+              label="タイムライン（操作履歴・コメント）"
+              icon={<ForumIcon />}
+              color={timelineOpen ? 'primary' : 'default'}
+              onClick={() => setTimelineOpen((prev) => !prev)}
+              disabled={kizaihyouId === null}
+            />
+            {kizaihyouId !== null && access?.member && (
+              <ToolbarIconButton label="メンバー" icon={<GroupIcon />} onClick={() => setMembersOpen(true)} />
+            )}
+            <ToolbarIconButton
+              label="流用して新規作成"
+              icon={<ContentCopyIcon />}
+              onClick={handleCopy}
+              disabled={busy || kizaihyouId === null}
+            />
+            <ToolbarIconButton label="Excel出力" icon={<GridOnIcon />} onClick={handleExportExcel} disabled={busy} />
+            <ToolbarIconButton label="PDF出力" icon={<PictureAsPdfIcon />} onClick={handleExportPdf} disabled={busy} />
+            {/* 完了・作成中に戻す・削除は持ち主だけ。他の人が編集中なら止める（サーバー側でも弾く） */}
+            {isOwner &&
+              (status === '完了' ? (
+                <ToolbarIconButton
+                  label="作成中に戻す"
+                  icon={<LockOpenIcon />}
+                  onClick={handleReopen}
+                  disabled={busy}
+                />
+              ) : (
+                <ToolbarIconButton
+                  label="完了にする"
+                  icon={<TaskAltIcon />}
+                  onClick={handleComplete}
+                  disabled={busy || kizaihyouId === null || !COMPLETABLE_STATUSES.includes(status) || !!otherLock}
+                />
+              ))}
+            {isOwner && (
+              <ToolbarIconButton
+                label="機材表を削除"
+                icon={<DeleteForeverIcon />}
+                color="error"
+                onClick={() => setDeleteOpen(true)}
+                disabled={busy || kizaihyouId === null || status === '申請中' || !!otherLock}
+              />
+            )}
+            <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
             {kizaihyouId !== null &&
               canEditRole &&
               !statusReadOnly &&
@@ -1166,11 +1426,6 @@ const EquipmentTable = ({
                   編集
                 </Button>
               ))}
-            {kizaihyouId !== null && access?.member && (
-              <Button startIcon={<GroupIcon />} onClick={() => setMembersOpen(true)}>
-                メンバー
-              </Button>
-            )}
             <Button
               startIcon={<LibraryAddIcon />}
               onClick={() => setKizaiAddTarget({ afterRowId: null })}
@@ -1184,47 +1439,6 @@ const EquipmentTable = ({
             <Button startIcon={<AddIcon />} onClick={addColumn} disabled={readOnly}>
               列を追加
             </Button>
-            <Button
-              startIcon={<ForumIcon />}
-              onClick={() => setTimelineOpen((prev) => !prev)}
-              disabled={kizaihyouId === null}
-            >
-              タイムライン
-            </Button>
-            <Button startIcon={<ContentCopyIcon />} onClick={handleCopy} disabled={busy || kizaihyouId === null}>
-              流用して新規作成
-            </Button>
-            <Button startIcon={<DownloadIcon />} onClick={handleExportExcel} disabled={busy}>
-              Excel出力
-            </Button>
-            <Button startIcon={<PictureAsPdfIcon />} onClick={handleExportPdf} disabled={busy}>
-              PDF出力
-            </Button>
-            {/* 完了・作成中に戻す・削除は持ち主だけ。他の人が編集中なら止める（サーバー側でも弾く） */}
-            {isOwner &&
-              (status === '完了' ? (
-                <Button startIcon={<LockOpenIcon />} onClick={handleReopen} disabled={busy}>
-                  作成中に戻す
-                </Button>
-              ) : (
-                <Button
-                  startIcon={<TaskAltIcon />}
-                  onClick={handleComplete}
-                  disabled={busy || kizaihyouId === null || !COMPLETABLE_STATUSES.includes(status) || !!otherLock}
-                >
-                  完了にする
-                </Button>
-              ))}
-            {isOwner && (
-              <Button
-                startIcon={<DeleteForeverIcon />}
-                color="error"
-                onClick={() => setDeleteOpen(true)}
-                disabled={busy || kizaihyouId === null || status === '申請中' || !!otherLock}
-              >
-                削除
-              </Button>
-            )}
             <Button startIcon={<SaveIcon />} variant="outlined" onClick={handleSave} disabled={busy || readOnly}>
               保存
             </Button>
@@ -1400,12 +1614,25 @@ const EquipmentTable = ({
             </Box>
 
             <TableContainer sx={{ maxHeight: '80vh' }}>
-              <Table stickyHeader size="small" sx={{ width: 'max-content' }}>
+              <Table
+                ref={tableRef}
+                stickyHeader
+                size="small"
+                sx={{ width: 'max-content' }}
+                // 固定列の幅・位置（fixedCellSxが参照する）
+                style={toFixedColumnVars(fixedWidths) as React.CSSProperties}
+              >
                 <TableHead>
                   <TableRow>
                     <TableCell sx={fixedCellSx(0, true)} />
-                    <TableCell sx={fixedCellSx(1, true)}>種類</TableCell>
-                    <TableCell sx={fixedCellSx(2, true)}>名称</TableCell>
+                    <TableCell sx={fixedCellSx(1, true)}>
+                      種類
+                      {renderResizeHandle(1)}
+                    </TableCell>
+                    <TableCell sx={fixedCellSx(2, true)}>
+                      名称
+                      {renderResizeHandle(2)}
+                    </TableCell>
                     <TableCell align="center" sx={fixedCellSx(3, true)}>
                       備考
                     </TableCell>
@@ -1428,7 +1655,7 @@ const EquipmentTable = ({
                           column={column}
                           readOnly={readOnly}
                           onLabelChange={(label) => updateColumnLabel(column.id, label)}
-                          onRemove={() => removeColumn(column.id)}
+                          onRemove={() => requestRemoveColumn(column.id)}
                         />
                       ))}
                     </SortableContext>
@@ -1451,7 +1678,7 @@ const EquipmentTable = ({
                         readOnly={readOnly}
                         onUpdateRow={(patch) => updateRow(row.id, patch)}
                         onUpdateQty={(columnId, value) => updateQty(row.id, columnId, value)}
-                        onRemoveRow={() => removeRow(row.id)}
+                        onRemoveRow={() => requestRemoveRow(row.id)}
                         onAddKizaiBelow={() => setKizaiAddTarget({ afterRowId: row.id })}
                         onInsertRowBelow={() => insertRowBelow(row.id)}
                       />
@@ -1480,6 +1707,22 @@ const EquipmentTable = ({
             onClose={() => setMembersOpen(false)}
           />
         )}
+
+        <Dialog open={!!removeTarget} onClose={() => setRemoveTarget(null)} fullWidth maxWidth="xs">
+          <DialogTitle fontSize="medium">{removeTarget?.type === 'column' ? '列の削除' : '行の削除'}</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">{removeTarget?.message}</Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" color="error" onClick={confirmRemove}>
+              削除する
+            </Button>
+            {/* 誤操作を防ぐための確認なので、Enterで消えないようキャンセル側にフォーカスを置く */}
+            <Button onClick={() => setRemoveTarget(null)} autoFocus>
+              キャンセル
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         <Dialog open={confirmEndEdit} onClose={() => setConfirmEndEdit(false)}>
           <DialogTitle fontSize="medium">保存していない変更があります</DialogTitle>
